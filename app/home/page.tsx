@@ -1,51 +1,77 @@
-import { redirect } from "next/navigation"
+"use client"
+
+import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+import { supabase } from "@/lib/supabase"
 import { HomeFeed } from "@/components/home-feed"
-import { cookies } from "next/headers"
-import { createServerClient } from "@supabase/ssr"
 
-export default async function HomePage() {
-  const cookieStore = await cookies()
+export default function HomePage() {
+  const router = useRouter()
+  const [user, setUser] = useState<any>(null)
+  const [posts, setPosts] = useState<any[]>([])
+  const [likedPostIds, setLikedPostIds] = useState<Set<string>>(new Set())
+  const [isLoading, setIsLoading] = useState(true)
 
-  const supabaseServer = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => cookieStore.set(name, value, options))
-        },
-      },
-    },
-  )
+  useEffect(() => {
+    checkUserAndFetchData()
+  }, [])
 
-  const {
-    data: { user },
-  } = await supabaseServer.auth.getUser()
+  const checkUserAndFetchData = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-  if (!user) {
-    redirect("/auth/login")
+    if (!user) {
+      router.push("/auth/login")
+      return
+    }
+
+    setUser(user)
+    await fetchPosts(user.id)
+    setIsLoading(false)
   }
 
-  const { data: posts } = await supabaseServer
-    .from("posts")
-    .select(`
-      *,
-      profiles:user_id (
-        id,
-        first_name,
-        last_name,
-        username,
-        avatar_url
-      )
-    `)
-    .order("created_at", { ascending: false })
+  const fetchPosts = async (userId: string) => {
+    // Fetch all posts
+    const { data: postsData, error: postsError } = await supabase
+      .from("posts")
+      .select("*")
+      .order("created_at", { ascending: false })
 
-  const { data: likes } = await supabaseServer.from("likes").select("post_id").eq("user_id", user.id)
+    if (postsError) {
+      console.error("Error fetching posts:", postsError)
+      return
+    }
 
-  const likedPostIds = new Set(likes?.map((like) => like.post_id) || [])
+    // Fetch all unique user profiles
+    const userIds = [...new Set(postsData?.map((p) => p.user_id) || [])]
+    const { data: profilesData, error: profilesError } = await supabase.from("profiles").select("*").in("id", userIds)
 
-  return <HomeFeed initialPosts={posts || []} currentUserId={user.id} initialLikedPostIds={likedPostIds} />
+    if (profilesError) {
+      console.error("Error fetching profiles:", profilesError)
+      return
+    }
+
+    // Combine posts with profiles
+    const postsWithProfiles = postsData?.map((post) => ({
+      ...post,
+      profiles: profilesData?.find((p) => p.id === post.user_id) || null,
+    }))
+
+    setPosts(postsWithProfiles || [])
+
+    // Fetch user's liked posts
+    const { data: userLikes } = await supabase.from("likes").select("post_id").eq("user_id", userId)
+    setLikedPostIds(new Set(userLikes?.map((like) => like.post_id) || []))
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-pink-200 via-rose-200 to-pink-300">
+        <p className="text-gray-800 text-xl">Загрузка...</p>
+      </div>
+    )
+  }
+
+  return <HomeFeed initialPosts={posts} currentUserId={user?.id} initialLikedPostIds={likedPostIds} />
 }

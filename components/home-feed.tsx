@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -60,6 +60,33 @@ export function HomeFeed({
   const [newComment, setNewComment] = useState<Record<string, string>>({})
   const [loadingComments, setLoadingComments] = useState<Record<string, boolean>>({})
   const router = useRouter()
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("posts-channel")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts" }, async (payload) => {
+        console.log("[v0] New post received:", payload)
+
+        // Fetch the profile for the new post
+        const { data: profile } = await supabase.from("profiles").select("*").eq("id", payload.new.user_id).single()
+
+        const newPostWithProfile = {
+          ...payload.new,
+          profiles: profile,
+        }
+
+        // Add the new post to the top of the feed if it's not from the current user
+        // (current user's posts are already added optimistically)
+        if (payload.new.user_id !== currentUserId) {
+          setPosts((prev) => [newPostWithProfile, ...prev])
+        }
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [currentUserId])
 
   const handleCreatePost = async () => {
     if (!newPost.trim()) return
@@ -140,26 +167,27 @@ export function HomeFeed({
     setLoadingComments((prev) => ({ ...prev, [postId]: true }))
 
     try {
-      const { data, error } = await supabase
+      const { data: commentsData, error: commentsError } = await supabase
         .from("comments")
-        .select(
-          `
-          *,
-          profiles:user_id (
-            id,
-            first_name,
-            last_name,
-            username,
-            avatar_url
-          )
-        `,
-        )
+        .select("*")
         .eq("post_id", postId)
         .order("created_at", { ascending: false })
 
-      if (error) throw error
+      if (commentsError) throw commentsError
 
-      setComments((prev) => ({ ...prev, [postId]: data || [] }))
+      // Fetch profiles for all comment authors
+      const userIds = [...new Set(commentsData?.map((c) => c.user_id) || [])]
+      const { data: profilesData, error: profilesError } = await supabase.from("profiles").select("*").in("id", userIds)
+
+      if (profilesError) throw profilesError
+
+      // Combine comments with profiles
+      const commentsWithProfiles = commentsData?.map((comment) => ({
+        ...comment,
+        profiles: profilesData?.find((p) => p.id === comment.user_id) || null,
+      }))
+
+      setComments((prev) => ({ ...prev, [postId]: commentsWithProfiles || [] }))
       setShowComments((prev) => ({ ...prev, [postId]: true }))
     } catch (error) {
       console.error("Error loading comments:", error)
