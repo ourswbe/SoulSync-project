@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { Menu, X } from "lucide-react"
+import { Menu, X, MessageSquare } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 
@@ -31,16 +31,23 @@ export function Navigation() {
               Blog
             </Link>
             <Link
+              href="/messages"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
+            >
+              <MessageSquare className="w-4 h-4" />
+              Chat
+            </Link>
+            <Link
+              href="/settings"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Settings
+            </Link>
+            <Link
               href="/about"
               className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
               About
-            </Link>
-            <Link
-              href="/services"
-              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Services
             </Link>
             <Button size="sm" className="ml-4">
               Get Started
@@ -72,18 +79,26 @@ export function Navigation() {
                 Blog
               </Link>
               <Link
+                href="/messages"
+                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
+                onClick={() => setIsOpen(false)}
+              >
+                <MessageSquare className="w-4 h-4" />
+                Chat
+              </Link>
+              <Link
+                href="/settings"
+                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                onClick={() => setIsOpen(false)}
+              >
+                Settings
+              </Link>
+              <Link
                 href="/about"
                 className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
                 onClick={() => setIsOpen(false)}
               >
                 About
-              </Link>
-              <Link
-                href="/services"
-                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-                onClick={() => setIsOpen(false)}
-              >
-                Services
               </Link>
               <Button size="sm" className="w-full">
                 Get Started

@@ -8,8 +8,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 export type Profile = {
   id: string
   email: string
-  firstname: string
-  lastname: string
+  first_name: string
+  last_name: string
   username: string
   bio: string
   avatar_url: string
