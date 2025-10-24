@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
-import { MessageSquare, Send, Search, User } from "lucide-react"
+import { MessageSquare, Send, Search, User, X, ImageIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -24,6 +24,7 @@ interface Message {
   created_at: string
   read: boolean
   sender?: Profile
+  is_photo?: boolean
 }
 
 export default function MessagesPage() {
@@ -49,7 +50,32 @@ export default function MessagesPage() {
   useEffect(() => {
     if (selectedUser && currentUser) {
       loadMessages()
-      subscribeToMessages()
+      const channel = supabase
+        .channel(`messages-${selectedUser.id}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "messages",
+          },
+          (payload) => {
+            if (
+              (payload.new.sender_id === selectedUser.id && payload.new.receiver_id === currentUser.id) ||
+              (payload.new.sender_id === currentUser.id && payload.new.receiver_id === selectedUser.id)
+            ) {
+              setMessages((prev) => [...prev, payload.new as Message])
+              if (payload.new.receiver_id === currentUser.id) {
+                supabase.from("messages").update({ read: true }).eq("id", payload.new.id)
+              }
+            }
+          },
+        )
+        .subscribe()
+
+      return () => {
+        supabase.removeChannel(channel)
+      }
     }
   }, [selectedUser, currentUser])
 
@@ -86,7 +112,6 @@ export default function MessagesPage() {
 
     if (!error && data) {
       setMessages(data)
-      // Mark messages as read
       await supabase
         .from("messages")
         .update({ read: true })
@@ -96,46 +121,50 @@ export default function MessagesPage() {
     }
   }
 
-  function subscribeToMessages() {
-    if (!selectedUser || !currentUser) return
-
-    const channel = supabase
-      .channel("messages")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `sender_id=eq.${selectedUser.id}`,
-        },
-        (payload) => {
-          if (payload.new.receiver_id === currentUser.id) {
-            setMessages((prev) => [...prev, payload.new as Message])
-            // Mark as read
-            supabase.from("messages").update({ read: true }).eq("id", payload.new.id)
-          }
-        },
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }
-
   async function sendMessage() {
     if (!newMessage.trim() || !selectedUser || !currentUser) return
 
-    const { error } = await supabase.from("messages").insert({
-      sender_id: currentUser.id,
-      receiver_id: selectedUser.id,
-      content: newMessage.trim(),
-    })
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({
+        sender_id: currentUser.id,
+        receiver_id: selectedUser.id,
+        content: newMessage.trim(),
+      })
+      .select()
+      .single()
+
+    if (!error && data) {
+      setMessages((prev) => [...prev, data])
+      setNewMessage("")
+    }
+  }
+
+  async function deleteMessage(messageId: string) {
+    const { error } = await supabase.from("messages").delete().eq("id", messageId).eq("sender_id", currentUser.id)
 
     if (!error) {
-      setNewMessage("")
-      loadMessages()
+      setMessages((prev) => prev.filter((m) => m.id !== messageId))
+    }
+  }
+
+  async function sendPhoto() {
+    const photoUrl = prompt("Enter photo URL:")
+    if (!photoUrl?.trim() || !selectedUser || !currentUser) return
+
+    const { data, error } = await supabase
+      .from("messages")
+      .insert({
+        sender_id: currentUser.id,
+        receiver_id: selectedUser.id,
+        content: photoUrl.trim(),
+        is_photo: true,
+      })
+      .select()
+      .single()
+
+    if (!error && data) {
+      setMessages((prev) => [...prev, data])
     }
   }
 
@@ -258,11 +287,31 @@ export default function MessagesPage() {
                           className={`flex ${message.sender_id === currentUser.id ? "justify-end" : "justify-start"}`}
                         >
                           <div
-                            className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                            className={`max-w-[70%] rounded-2xl px-4 py-3 relative group ${
                               message.sender_id === currentUser.id ? "bg-rose-500 text-white" : "bg-white text-rose-900"
                             }`}
                           >
-                            <p className="break-words">{message.content}</p>
+                            {message.sender_id === currentUser.id && (
+                              <button
+                                onClick={() => deleteMessage(message.id)}
+                                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                            {message.content.startsWith("http") &&
+                            (message.content.includes(".jpg") ||
+                              message.content.includes(".png") ||
+                              message.content.includes(".gif") ||
+                              message.content.includes(".jpeg")) ? (
+                              <img
+                                src={message.content || "/placeholder.svg"}
+                                alt="Photo"
+                                className="rounded-lg max-w-full max-h-64 object-cover"
+                              />
+                            ) : (
+                              <p className="break-words">{message.content}</p>
+                            )}
                             <p
                               className={`text-xs mt-1 ${
                                 message.sender_id === currentUser.id ? "text-rose-100" : "text-rose-400"
@@ -282,6 +331,14 @@ export default function MessagesPage() {
                   {/* Message Input */}
                   <div className="p-6 border-t border-rose-200">
                     <div className="flex gap-3">
+                      <Button
+                        onClick={sendPhoto}
+                        variant="outline"
+                        size="icon"
+                        className="border-rose-200 hover:bg-rose-50 bg-transparent"
+                      >
+                        <ImageIcon className="w-5 h-5 text-rose-500" />
+                      </Button>
                       <Input
                         type="text"
                         placeholder="Напишите сообщение..."

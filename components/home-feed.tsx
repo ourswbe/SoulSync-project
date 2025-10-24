@@ -81,9 +81,12 @@ export function HomeFeed({
         console.log("[v0] New comment received:", payload)
         setPosts((prev) =>
           prev.map((post) =>
-            post.id === payload.new.post_id ? { ...post, comments_count: post.comments_count + 1 } : post,
+            post.id === payload.new.post_id ? { ...post, comments_count: (post.comments_count || 0) + 1 } : post,
           ),
         )
+        if (showComments[payload.new.post_id]) {
+          loadComments(payload.new.post_id)
+        }
       })
       .subscribe()
 

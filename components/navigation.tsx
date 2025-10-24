@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { Menu, X } from "lucide-react"
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
 
 export function Navigation() {
   const [isOpen, setIsOpen] = useState(false)
@@ -48,9 +47,6 @@ export function Navigation() {
             >
               About
             </Link>
-            <Button size="sm" className="ml-4">
-              Get Started
-            </Button>
           </div>
 
           {/* Mobile Menu Button */}
@@ -98,9 +94,6 @@ export function Navigation() {
               >
                 About
               </Link>
-              <Button size="sm" className="w-full">
-                Get Started
-              </Button>
             </div>
           </div>
         )}
