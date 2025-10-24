@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import { HomeFeed } from "@/components/home-feed"
+import { Navigation } from "@/components/navigation"
 
 export default function HomePage() {
   const router = useRouter()
@@ -32,7 +33,6 @@ export default function HomePage() {
   }
 
   const fetchPosts = async (userId: string) => {
-    // Fetch all posts
     const { data: postsData, error: postsError } = await supabase
       .from("posts")
       .select("*")
@@ -43,7 +43,6 @@ export default function HomePage() {
       return
     }
 
-    // Fetch all unique user profiles
     const userIds = [...new Set(postsData?.map((p) => p.user_id) || [])]
     const { data: profilesData, error: profilesError } = await supabase.from("profiles").select("*").in("id", userIds)
 
@@ -52,7 +51,6 @@ export default function HomePage() {
       return
     }
 
-    // Combine posts with profiles
     const postsWithProfiles = postsData?.map((post) => ({
       ...post,
       profiles: profilesData?.find((p) => p.id === post.user_id) || null,
@@ -60,7 +58,6 @@ export default function HomePage() {
 
     setPosts(postsWithProfiles || [])
 
-    // Fetch user's liked posts
     const { data: userLikes } = await supabase.from("likes").select("post_id").eq("user_id", userId)
     setLikedPostIds(new Set(userLikes?.map((like) => like.post_id) || []))
   }
@@ -73,5 +70,10 @@ export default function HomePage() {
     )
   }
 
-  return <HomeFeed initialPosts={posts} currentUserId={user?.id} initialLikedPostIds={likedPostIds} />
+  return (
+    <>
+      <Navigation />
+      <HomeFeed initialPosts={posts} currentUserId={user?.id} initialLikedPostIds={likedPostIds} />
+    </>
+  )
 }

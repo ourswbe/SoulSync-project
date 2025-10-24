@@ -7,8 +7,7 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Heart, MessageCircle, ImageIcon, LogOut, Home, User, SettingsIcon, Users, X, Send } from "lucide-react"
-import Link from "next/link"
+import { Heart, MessageCircle, ImageIcon, X, Send } from "lucide-react"
 import { useRouter } from "next/navigation"
 
 type Post = {
@@ -67,7 +66,6 @@ export function HomeFeed({
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts" }, async (payload) => {
         console.log("[v0] New post received:", payload)
 
-        // Fetch the profile for the new post
         const { data: profile } = await supabase.from("profiles").select("*").eq("id", payload.new.user_id).single()
 
         const newPostWithProfile = {
@@ -75,11 +73,17 @@ export function HomeFeed({
           profiles: profile,
         }
 
-        // Add the new post to the top of the feed if it's not from the current user
-        // (current user's posts are already added optimistically)
         if (payload.new.user_id !== currentUserId) {
           setPosts((prev) => [newPostWithProfile, ...prev])
         }
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "comments" }, (payload) => {
+        console.log("[v0] New comment received:", payload)
+        setPosts((prev) =>
+          prev.map((post) =>
+            post.id === payload.new.post_id ? { ...post, comments_count: post.comments_count + 1 } : post,
+          ),
+        )
       })
       .subscribe()
 
@@ -175,13 +179,11 @@ export function HomeFeed({
 
       if (commentsError) throw commentsError
 
-      // Fetch profiles for all comment authors
       const userIds = [...new Set(commentsData?.map((c) => c.user_id) || [])]
       const { data: profilesData, error: profilesError } = await supabase.from("profiles").select("*").in("id", userIds)
 
       if (profilesError) throw profilesError
 
-      // Combine comments with profiles
       const commentsWithProfiles = commentsData?.map((comment) => ({
         ...comment,
         profiles: profilesData?.find((p) => p.id === comment.user_id) || null,
@@ -241,52 +243,7 @@ export function HomeFeed({
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Navigation */}
-      <nav className="sticky top-0 z-50 bg-card/80 backdrop-blur-lg border-b border-border">
-        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-          <Link href="/home" className="text-2xl font-bold">
-            SoulSync<span className="text-primary">.</span>
-          </Link>
-
-          <div className="flex items-center gap-6">
-            <Link href="/home" className="flex items-center gap-2 text-foreground hover:text-primary transition-colors">
-              <Home className="w-5 h-5" />
-              <span className="hidden sm:inline">Home</span>
-            </Link>
-            <Link
-              href="/blog"
-              className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors"
-            >
-              <User className="w-5 h-5" />
-              <span className="hidden sm:inline">Blog</span>
-            </Link>
-            <Link
-              href="/settings"
-              className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors"
-            >
-              <SettingsIcon className="w-5 h-5" />
-              <span className="hidden sm:inline">Settings</span>
-            </Link>
-            <Link
-              href="/about"
-              className="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors"
-            >
-              <Users className="w-5 h-5" />
-              <span className="hidden sm:inline">About</span>
-            </Link>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleLogout}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <LogOut className="w-5 h-5" />
-            </Button>
-          </div>
-        </div>
-      </nav>
-
+    <div className="min-h-screen bg-background pt-16">
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         {/* Create Post */}
         <Card className="p-6 mb-6">
@@ -405,7 +362,6 @@ export function HomeFeed({
 
                   {showComments[post.id] && (
                     <div className="mt-4 pt-4 border-t border-border space-y-4">
-                      {/* Add comment input */}
                       <div className="flex gap-2">
                         <Input
                           placeholder="Write a comment..."
@@ -428,7 +384,6 @@ export function HomeFeed({
                         </Button>
                       </div>
 
-                      {/* Comments list */}
                       {loadingComments[post.id] ? (
                         <p className="text-sm text-muted-foreground text-center">Loading comments...</p>
                       ) : (

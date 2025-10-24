@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { Menu, X, MessageSquare } from "lucide-react"
+import { Menu, X } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 
@@ -32,9 +32,8 @@ export function Navigation() {
             </Link>
             <Link
               href="/messages"
-              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
             >
-              <MessageSquare className="w-4 h-4" />
               Chat
             </Link>
             <Link
@@ -80,10 +79,9 @@ export function Navigation() {
               </Link>
               <Link
                 href="/messages"
-                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-2"
+                className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
                 onClick={() => setIsOpen(false)}
               >
-                <MessageSquare className="w-4 h-4" />
                 Chat
               </Link>
               <Link
