@@ -20,19 +20,40 @@ export default function ResetPasswordPage() {
   useEffect(() => {
     const handleHashChange = async () => {
       const hash = window.location.hash
+      console.log("[v0] Full URL:", window.location.href)
       console.log("[v0] Hash:", hash)
 
       if (hash && hash.includes("access_token")) {
-        const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+        try {
+          const supabase = createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+          )
 
-        const { error } = await supabase.auth.setSession({
-          access_token: new URLSearchParams(hash.substring(1)).get("access_token")!,
-          refresh_token: new URLSearchParams(hash.substring(1)).get("refresh_token")!,
-        })
+          const hashParams = new URLSearchParams(hash.substring(1))
+          const accessToken = hashParams.get("access_token")
+          const refreshToken = hashParams.get("refresh_token")
 
-        if (error) {
-          console.error("[v0] Session error:", error)
-          setMessage({ type: "error", text: "Неверная ссылка. Запросите новую." })
+          console.log("[v0] Access token exists:", !!accessToken)
+          console.log("[v0] Refresh token exists:", !!refreshToken)
+
+          if (accessToken && refreshToken) {
+            const { error } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            })
+
+            if (error) {
+              console.error("[v0] Session error:", error)
+              setMessage({ type: "error", text: "Неверная ссылка или она истекла. Запросите новую." })
+            } else {
+              console.log("[v0] Session set successfully")
+              setMessage({ type: "success", text: "Сессия установлена. Введите новый пароль." })
+            }
+          }
+        } catch (error) {
+          console.error("[v0] Error setting session:", error)
+          setMessage({ type: "error", text: "Ошибка при обработке ссылки" })
         }
       }
     }
@@ -66,7 +87,7 @@ export default function ResetPasswordPage() {
 
       if (error) throw error
 
-      setMessage({ type: "success", text: "Пароль успешно изменён! Перенаправление..." })
+      setMessage({ type: "success", text: "Пароль успешно изменён! Перенаправление на страницу входа..." })
 
       await supabase.auth.signOut()
 
@@ -75,7 +96,7 @@ export default function ResetPasswordPage() {
       console.error("[v0] Error:", error)
       setMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "Не удалось сбросить пароль",
+        text: error instanceof Error ? error.message : "Не удалось сбросить пароль. Попробуйте запросить новую ссылку.",
       })
     } finally {
       setIsLoading(false)

@@ -32,7 +32,7 @@ export default function ForgotPasswordPage() {
 
       setMessage({
         type: "success",
-        text: "Ссылка для восстановления пароля отправлена на ваш email!",
+        text: "Ссылка для восстановления пароля отправлена на ваш email! Проверьте почту и перейдите по ссылке.",
       })
 
       setEmail("")
