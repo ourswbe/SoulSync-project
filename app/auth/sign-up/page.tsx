@@ -1,13 +1,13 @@
 "use client"
 
 import type React from "react"
-import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { User, Mail, Lock } from "lucide-react"
+import { createClient as createSupabaseClient } from "@supabase/supabase-js"
 
 export default function SignUpPage() {
   const [firstName, setFirstName] = useState("")
@@ -24,6 +24,30 @@ export default function SignUpPage() {
     setError(null)
 
     try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+      const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+      console.log("[v0] Supabase URL:", supabaseUrl)
+      console.log("[v0] Supabase Key exists:", !!supabaseAnonKey)
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        throw new Error("Supabase configuration is missing. Please check environment variables.")
+      }
+
+      const supabase = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          autoRefreshToken: true,
+          persistSession: true,
+          detectSessionInUrl: true,
+        },
+      })
+
+      if (!email || !password || !firstName || !lastName) {
+        throw new Error("Please fill in all fields")
+      }
+
+      console.log("[v0] Starting sign up...")
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -36,14 +60,33 @@ export default function SignUpPage() {
         },
       })
 
+      console.log("[v0] Sign up response:", { data, error })
+
       if (error) throw error
 
       if (data.user && !data.user.identities?.length) {
         throw new Error("This email is already registered")
       }
 
+      if (data.user) {
+        const { error: profileError } = await supabase.from("profiles").insert({
+          id: data.user.id,
+          email: email,
+          first_name: firstName,
+          last_name: lastName,
+          username: email.split("@")[0],
+          bio: "",
+          avatar_url: "",
+        })
+
+        if (profileError) {
+          console.error("[v0] Profile creation error:", profileError)
+        }
+      }
+
       router.push("/blog")
     } catch (error: unknown) {
+      console.error("[v0] Sign up error:", error)
       setError(error instanceof Error ? error.message : "An error occurred")
     } finally {
       setIsLoading(false)

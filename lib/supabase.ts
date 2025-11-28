@@ -1,9 +1,18 @@
-import { createClient } from "@supabase/supabase-js"
+import { createBrowserClient } from "@supabase/ssr"
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export function createClient() {
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.error("[v0] Supabase environment variables are not set")
+    throw new Error("Supabase configuration is missing")
+  }
+
+  return createBrowserClient(supabaseUrl, supabaseAnonKey)
+}
+
+export const supabase = createClient()
 
 export type Profile = {
   id: string

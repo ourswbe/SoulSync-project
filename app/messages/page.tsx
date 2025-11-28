@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
-import { MessageSquare, Send, Search, User, X, ImageIcon } from "lucide-react"
+import { MessageSquare, Send, Search, User, X, ImageIcon, FileText, Video, Mic, Paperclip } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -24,7 +24,9 @@ interface Message {
   created_at: string
   read: boolean
   sender?: Profile
-  is_photo?: boolean
+  file_url?: string | null
+  file_type?: string | null
+  file_name?: string | null
 }
 
 export default function MessagesPage() {
@@ -36,6 +38,11 @@ export default function MessagesPage() {
   const [newMessage, setNewMessage] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
   const [loading, setLoading] = useState(true)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingTime, setRecordingTime] = useState(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     checkUser()
@@ -66,7 +73,7 @@ export default function MessagesPage() {
             ) {
               setMessages((prev) => [...prev, payload.new as Message])
               if (payload.new.receiver_id === currentUser.id) {
-                supabase.from("messages").update({ read: true }).eq("id", payload.new.id)
+                supabase.from("messages").update({ read: true }).eq("id", payload.new.id).then()
               }
             }
           },
@@ -124,18 +131,13 @@ export default function MessagesPage() {
   async function sendMessage() {
     if (!newMessage.trim() || !selectedUser || !currentUser) return
 
-    const { data, error } = await supabase
-      .from("messages")
-      .insert({
-        sender_id: currentUser.id,
-        receiver_id: selectedUser.id,
-        content: newMessage.trim(),
-      })
-      .select()
-      .single()
+    const { error } = await supabase.from("messages").insert({
+      sender_id: currentUser.id,
+      receiver_id: selectedUser.id,
+      content: newMessage.trim(),
+    })
 
-    if (!error && data) {
-      setMessages((prev) => [...prev, data])
+    if (!error) {
       setNewMessage("")
     }
   }
@@ -148,23 +150,85 @@ export default function MessagesPage() {
     }
   }
 
-  async function sendPhoto() {
-    const photoUrl = prompt("Enter photo URL:")
-    if (!photoUrl?.trim() || !selectedUser || !currentUser) return
+  async function sendFile(type: "image" | "video" | "document") {
+    const fileUrl = prompt(
+      `Enter ${type} URL:\n\nSupported formats:\n` +
+        (type === "image"
+          ? "- Images: .jpg, .jpeg, .png, .gif"
+          : type === "video"
+            ? "- Videos: .mp4, .mov, .avi"
+            : "- Documents: .pdf, .doc, .docx"),
+    )
+    if (!fileUrl?.trim() || !selectedUser || !currentUser) return
 
-    const { data, error } = await supabase
-      .from("messages")
-      .insert({
-        sender_id: currentUser.id,
-        receiver_id: selectedUser.id,
-        content: photoUrl.trim(),
-        is_photo: true,
-      })
-      .select()
-      .single()
+    const { error } = await supabase.from("messages").insert({
+      sender_id: currentUser.id,
+      receiver_id: selectedUser.id,
+      content: "",
+      file_url: fileUrl.trim(),
+      file_type: type,
+      file_name: fileUrl.split("/").pop() || "file",
+    })
 
-    if (!error && data) {
-      setMessages((prev) => [...prev, data])
+    if (error) {
+      alert("Failed to send file")
+    }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaRecorderRef.current = new MediaRecorder(stream)
+      audioChunksRef.current = []
+
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data)
+      }
+
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
+        const audioUrl = URL.createObjectURL(audioBlob)
+
+        // In production, you would upload this to Supabase Storage
+        // For now, we'll send a placeholder message
+        await supabase.from("messages").insert({
+          sender_id: currentUser.id,
+          receiver_id: selectedUser?.id,
+          content: `🎤 Voice message (${recordingTime}s)`,
+          file_url: audioUrl,
+          file_type: "audio",
+          file_name: "voice-message.webm",
+        })
+
+        stream.getTracks().forEach((track) => track.stop())
+      }
+
+      mediaRecorderRef.current.start()
+      setIsRecording(true)
+      setRecordingTime(0)
+
+      // Auto-stop after 30 seconds
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime((prev) => {
+          if (prev >= 30) {
+            stopRecording()
+            return 30
+          }
+          return prev + 1
+        })
+      }, 1000)
+    } catch (error) {
+      alert("Could not access microphone")
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop()
+      setIsRecording(false)
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current)
+      }
     }
   }
 
@@ -178,21 +242,21 @@ export default function MessagesPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-pink-100 via-rose-100 to-pink-200 flex items-center justify-center">
-        <div className="text-rose-600">Загрузка...</div>
+        <div className="text-rose-600">Loading...</div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-pink-100 via-rose-100 to-pink-200">
+    <div className="min-h-screen bg-gradient-to-br from-pink-100 via-rose-100 to-pink-200 pt-20">
       <div className="container mx-auto px-4 py-8">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-4xl font-bold text-rose-900 mb-8 flex items-center gap-3">
             <MessageSquare className="w-10 h-10" />
-            Сообщения
+            Chat
           </h1>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-200px)]">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-250px)]">
             {/* Users List */}
             <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl p-6 flex flex-col">
               <div className="mb-4">
@@ -200,7 +264,7 @@ export default function MessagesPage() {
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-rose-400 w-5 h-5" />
                   <Input
                     type="text"
-                    placeholder="Поиск пользователей..."
+                    placeholder="Search users..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-10 bg-white/50 border-rose-200 focus:border-rose-400"
@@ -299,19 +363,38 @@ export default function MessagesPage() {
                                 <X className="w-3 h-3" />
                               </button>
                             )}
-                            {message.content.startsWith("http") &&
-                            (message.content.includes(".jpg") ||
-                              message.content.includes(".png") ||
-                              message.content.includes(".gif") ||
-                              message.content.includes(".jpeg")) ? (
+
+                            {message.file_url && message.file_type === "image" && (
                               <img
-                                src={message.content || "/placeholder.svg"}
-                                alt="Photo"
-                                className="rounded-lg max-w-full max-h-64 object-cover"
+                                src={message.file_url || "/placeholder.svg"}
+                                alt="Image"
+                                className="rounded-lg max-w-full max-h-64 object-cover mb-2"
                               />
-                            ) : (
-                              <p className="break-words">{message.content}</p>
                             )}
+                            {message.file_url && message.file_type === "video" && (
+                              <video controls className="rounded-lg max-w-full max-h-64 mb-2">
+                                <source src={message.file_url} />
+                              </video>
+                            )}
+                            {message.file_url && message.file_type === "document" && (
+                              <a
+                                href={message.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 underline"
+                              >
+                                <FileText className="w-5 h-5" />
+                                {message.file_name || "Document"}
+                              </a>
+                            )}
+                            {message.file_url && message.file_type === "audio" && (
+                              <audio controls className="max-w-full">
+                                <source src={message.file_url} type="audio/webm" />
+                              </audio>
+                            )}
+
+                            {message.content && <p className="break-words">{message.content}</p>}
+
                             <p
                               className={`text-xs mt-1 ${
                                 message.sender_id === currentUser.id ? "text-rose-100" : "text-rose-400"
@@ -328,20 +411,51 @@ export default function MessagesPage() {
                     </div>
                   </ScrollArea>
 
-                  {/* Message Input */}
+                  {/* Message Input with File Support */}
                   <div className="p-6 border-t border-rose-200">
-                    <div className="flex gap-3">
+                    <div className="flex gap-2 mb-3">
                       <Button
-                        onClick={sendPhoto}
+                        onClick={() => sendFile("image")}
                         variant="outline"
-                        size="icon"
-                        className="border-rose-200 hover:bg-rose-50 bg-transparent"
+                        size="sm"
+                        className="border-rose-200 hover:bg-rose-50"
+                        title="Send Image"
                       >
-                        <ImageIcon className="w-5 h-5 text-rose-500" />
+                        <ImageIcon className="w-4 h-4 text-rose-500" />
                       </Button>
+                      <Button
+                        onClick={() => sendFile("video")}
+                        variant="outline"
+                        size="sm"
+                        className="border-rose-200 hover:bg-rose-50"
+                        title="Send Video"
+                      >
+                        <Video className="w-4 h-4 text-rose-500" />
+                      </Button>
+                      <Button
+                        onClick={() => sendFile("document")}
+                        variant="outline"
+                        size="sm"
+                        className="border-rose-200 hover:bg-rose-50"
+                        title="Send Document"
+                      >
+                        <Paperclip className="w-4 h-4 text-rose-500" />
+                      </Button>
+                      <Button
+                        onClick={isRecording ? stopRecording : startRecording}
+                        variant="outline"
+                        size="sm"
+                        className={`border-rose-200 hover:bg-rose-50 ${isRecording ? "bg-red-100" : ""}`}
+                        title="Voice Message (30s max)"
+                      >
+                        <Mic className={`w-4 h-4 ${isRecording ? "text-red-500 animate-pulse" : "text-rose-500"}`} />
+                        {isRecording && <span className="text-xs ml-1">{recordingTime}s</span>}
+                      </Button>
+                    </div>
+                    <div className="flex gap-3">
                       <Input
                         type="text"
-                        placeholder="Напишите сообщение..."
+                        placeholder="Write a message..."
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
                         onKeyPress={(e) => e.key === "Enter" && sendMessage()}
@@ -361,7 +475,7 @@ export default function MessagesPage() {
                 <div className="flex-1 flex items-center justify-center text-rose-400">
                   <div className="text-center">
                     <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                    <p className="text-lg">Выберите пользователя для начала чата</p>
+                    <p className="text-lg">Select a user to start chatting</p>
                   </div>
                 </div>
               )}
