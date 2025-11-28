@@ -3,7 +3,6 @@
 import type React from "react"
 
 import { useState } from "react"
-import { createClient } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
@@ -13,33 +12,41 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [resetUrl, setResetUrl] = useState<string | null>(null)
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setMessage(null)
+    setResetUrl(null)
 
     try {
-      const supabase = createClient()
-
-      const redirectUrl =
-        process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || `${window.location.origin}/auth/reset-password`
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl,
+      const response = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
       })
 
-      if (error) throw error
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || "Не удалось отправить ссылку")
+      }
 
       setMessage({
         type: "success",
-        text: "Password reset link sent! Check your email.",
+        text: data.message,
       })
+
+      if (data.resetUrl) {
+        setResetUrl(data.resetUrl)
+      }
+
       setEmail("")
     } catch (error) {
       setMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "Failed to send reset link",
+        text: error instanceof Error ? error.message : "Не удалось отправить ссылку",
       })
     } finally {
       setIsLoading(false)
@@ -48,7 +55,6 @@ export default function ForgotPasswordPage() {
 
   return (
     <div className="min-h-screen relative overflow-hidden flex items-center justify-center p-4">
-      {/* Pink gradient background with hearts */}
       <div className="absolute inset-0 bg-gradient-to-br from-pink-300 via-rose-300 to-pink-200">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px]">
           <div className="absolute inset-0 rounded-full bg-gradient-to-br from-rose-400/30 to-pink-400/30 blur-3xl animate-pulse" />
@@ -57,14 +63,12 @@ export default function ForgotPasswordPage() {
         </div>
       </div>
 
-      {/* Header */}
       <header className="absolute top-0 left-0 right-0 flex items-center justify-between p-6 z-10">
         <Link href="/" className="text-2xl font-bold text-gray-800">
           SoulSync
         </Link>
       </header>
 
-      {/* Forgot Password Form */}
       <div className="relative z-10 w-full max-w-md">
         <div className="bg-white/40 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/50">
           <Link href="/auth/login" className="inline-flex items-center gap-2 text-gray-700 hover:text-gray-900 mb-6">
@@ -100,12 +104,26 @@ export default function ForgotPasswordPage() {
               </p>
             )}
 
+            {resetUrl && (
+              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <p className="text-sm text-blue-700 font-semibold mb-2">Режим разработки - Ссылка для сброса:</p>
+                <a
+                  href={resetUrl}
+                  className="text-xs text-blue-600 underline break-all hover:text-blue-800"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {resetUrl}
+                </a>
+              </div>
+            )}
+
             <Button
               type="submit"
               disabled={isLoading}
               className="w-full h-14 bg-white/80 hover:bg-white text-gray-800 font-semibold rounded-full text-lg"
             >
-              {isLoading ? "Sending..." : "Send Reset Link"}
+              {isLoading ? "Отправка..." : "Отправить ссылку"}
             </Button>
           </form>
         </div>

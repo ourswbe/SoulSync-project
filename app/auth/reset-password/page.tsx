@@ -4,7 +4,6 @@ import type React from "react"
 
 import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { createClient } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
@@ -17,69 +16,32 @@ export default function ResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
-  const [hasValidSession, setHasValidSession] = useState(false)
+  const [token, setToken] = useState<string | null>(null)
+  const [email, setEmail] = useState<string | null>(null)
 
   useEffect(() => {
-    const verifyAndSetSession = async () => {
-      const supabase = createClient()
+    const tokenParam = searchParams.get("token")
+    const emailParam = searchParams.get("email")
 
-      const code = searchParams.get("code")
-      const type = searchParams.get("type")
+    console.log("[v0] Reset password - token:", tokenParam, "email:", emailParam)
 
-      console.log("[v0] Reset password - code:", code, "type:", type)
-
-      if (code && type === "recovery") {
-        try {
-          // Exchange the code for a session
-          const { data, error } = await supabase.auth.exchangeCodeForSession(code)
-
-          if (error) {
-            console.error("[v0] Error exchanging code:", error)
-            setMessage({
-              type: "error",
-              text: "Invalid or expired reset link. Please request a new one.",
-            })
-            setTimeout(() => router.push("/auth/forgot-password"), 3000)
-            return
-          }
-
-          if (data.session) {
-            console.log("[v0] Session established successfully")
-            setHasValidSession(true)
-          }
-        } catch (err) {
-          console.error("[v0] Exception exchanging code:", err)
-          setMessage({
-            type: "error",
-            text: "Failed to verify reset link. Please try again.",
-          })
-        }
-      } else {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession()
-
-        if (session) {
-          console.log("[v0] Found existing session")
-          setHasValidSession(true)
-        } else {
-          setMessage({
-            type: "error",
-            text: "Invalid or expired reset link. Please request a new one.",
-          })
-          setTimeout(() => router.push("/auth/forgot-password"), 3000)
-        }
-      }
+    if (tokenParam && emailParam) {
+      setToken(tokenParam)
+      setEmail(emailParam)
+    } else {
+      setMessage({
+        type: "error",
+        text: "Неверная ссылка для восстановления. Запросите новую ссылку.",
+      })
+      setTimeout(() => router.push("/auth/forgot-password"), 3000)
     }
-
-    verifyAndSetSession()
   }, [router, searchParams])
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!hasValidSession) {
-      setMessage({ type: "error", text: "No valid session. Please use the link from your email." })
+    if (!token || !email) {
+      setMessage({ type: "error", text: "Неверная ссылка. Используйте ссылку из email." })
       return
     }
 
@@ -87,32 +49,38 @@ export default function ResetPasswordPage() {
     setMessage(null)
 
     if (password !== confirmPassword) {
-      setMessage({ type: "error", text: "Passwords do not match" })
+      setMessage({ type: "error", text: "Пароли не совпадают" })
       setIsLoading(false)
       return
     }
 
-    if (password.length < 6) {
-      setMessage({ type: "error", text: "Password must be at least 6 characters" })
+    if (password.length < 8) {
+      setMessage({ type: "error", text: "Пароль должен содержать минимум 8 символов" })
       setIsLoading(false)
       return
     }
 
     try {
-      const supabase = createClient()
-      const { error } = await supabase.auth.updateUser({ password })
+      const response = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, token, newPassword: password }),
+      })
 
-      if (error) throw error
+      const data = await response.json()
 
-      setMessage({ type: "success", text: "Password updated successfully! Redirecting to login..." })
+      if (!response.ok) {
+        throw new Error(data.error || "Не удалось сбросить пароль")
+      }
 
-      await supabase.auth.signOut()
+      setMessage({ type: "success", text: "Пароль успешно изменён! Перенаправление на страницу входа..." })
+
       setTimeout(() => router.push("/auth/login"), 2000)
     } catch (error) {
       console.error("[v0] Error updating password:", error)
       setMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "Failed to reset password",
+        text: error instanceof Error ? error.message : "Не удалось сбросить пароль",
       })
     } finally {
       setIsLoading(false)
@@ -180,10 +148,10 @@ export default function ResetPasswordPage() {
 
             <Button
               type="submit"
-              disabled={isLoading || !hasValidSession}
+              disabled={isLoading || !token || !email}
               className="w-full h-14 bg-white/80 hover:bg-white text-gray-800 font-semibold rounded-full text-lg disabled:opacity-50"
             >
-              {isLoading ? "Updating..." : "Update Password"}
+              {isLoading ? "Обновление..." : "Обновить пароль"}
             </Button>
           </form>
         </div>
