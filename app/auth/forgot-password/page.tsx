@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { Mail, ArrowLeft } from "lucide-react"
-import { createClient } from "@supabase/supabase-js"
+import { supabase } from "@/lib/supabase"
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("")
@@ -19,10 +19,9 @@ export default function ForgotPasswordPage() {
     setMessage(null)
 
     try {
-      const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
-
       const redirectUrl = `${window.location.origin}/auth/reset-password`
-      console.log("[v0] Reset password redirect URL:", redirectUrl)
+      console.log("[RESET] Sending password reset email to:", email)
+      console.log("[RESET] Redirect URL:", redirectUrl)
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: redirectUrl,
@@ -37,7 +36,7 @@ export default function ForgotPasswordPage() {
 
       setEmail("")
     } catch (error) {
-      console.error("[v0] Error:", error)
+      console.error("[RESET] Error:", error)
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Не удалось отправить ссылку",
@@ -67,12 +66,12 @@ export default function ForgotPasswordPage() {
         <div className="bg-white/40 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/50">
           <Link href="/auth/login" className="inline-flex items-center gap-2 text-gray-700 hover:text-gray-900 mb-6">
             <ArrowLeft className="w-4 h-4" />
-            Back to Login
+            Назад к входу
           </Link>
 
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-gray-800 mb-2">Forgot Password?</h1>
-            <p className="text-gray-700">Enter your email to receive a password reset link</p>
+            <h1 className="text-4xl font-bold text-gray-800 mb-2">Забыли пароль?</h1>
+            <p className="text-gray-700">Введите ваш email для получения ссылки восстановления</p>
           </div>
 
           <form onSubmit={handleResetPassword} className="space-y-6">

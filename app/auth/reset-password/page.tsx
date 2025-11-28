@@ -1,14 +1,13 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { Lock, CheckCircle } from "lucide-react"
-import { createClient } from "@supabase/supabase-js"
+import { supabase } from "@/lib/supabase"
 
 export default function ResetPasswordPage() {
   const router = useRouter()
@@ -18,24 +17,19 @@ export default function ResetPasswordPage() {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   useEffect(() => {
-    const handleHashChange = async () => {
+    const checkSession = async () => {
       const hash = window.location.hash
-      console.log("[v0] Full URL:", window.location.href)
-      console.log("[v0] Hash:", hash)
+      console.log("[RESET] Full URL:", window.location.href)
+      console.log("[RESET] Hash:", hash)
 
       if (hash && hash.includes("access_token")) {
         try {
-          const supabase = createClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-          )
-
           const hashParams = new URLSearchParams(hash.substring(1))
           const accessToken = hashParams.get("access_token")
           const refreshToken = hashParams.get("refresh_token")
 
-          console.log("[v0] Access token exists:", !!accessToken)
-          console.log("[v0] Refresh token exists:", !!refreshToken)
+          console.log("[RESET] Access token exists:", !!accessToken)
+          console.log("[RESET] Refresh token exists:", !!refreshToken)
 
           if (accessToken && refreshToken) {
             const { error } = await supabase.auth.setSession({
@@ -44,21 +38,21 @@ export default function ResetPasswordPage() {
             })
 
             if (error) {
-              console.error("[v0] Session error:", error)
+              console.error("[RESET] Session error:", error)
               setMessage({ type: "error", text: "Неверная ссылка или она истекла. Запросите новую." })
             } else {
-              console.log("[v0] Session set successfully")
+              console.log("[RESET] Session set successfully")
               setMessage({ type: "success", text: "Сессия установлена. Введите новый пароль." })
             }
           }
         } catch (error) {
-          console.error("[v0] Error setting session:", error)
+          console.error("[RESET] Error setting session:", error)
           setMessage({ type: "error", text: "Ошибка при обработке ссылки" })
         }
       }
     }
 
-    handleHashChange()
+    checkSession()
   }, [])
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -79,8 +73,7 @@ export default function ResetPasswordPage() {
     }
 
     try {
-      const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
-
+      console.log("[RESET] Updating password...")
       const { error } = await supabase.auth.updateUser({
         password: password,
       })
@@ -89,11 +82,12 @@ export default function ResetPasswordPage() {
 
       setMessage({ type: "success", text: "Пароль успешно изменён! Перенаправление на страницу входа..." })
 
+      // Выходим из системы для очистки сессии
       await supabase.auth.signOut()
 
       setTimeout(() => router.push("/auth/login"), 2000)
     } catch (error) {
-      console.error("[v0] Error:", error)
+      console.error("[RESET] Error:", error)
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Не удалось сбросить пароль. Попробуйте запросить новую ссылку.",
@@ -122,8 +116,8 @@ export default function ResetPasswordPage() {
       <div className="relative z-10 w-full max-w-md">
         <div className="bg-white/40 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/50">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-gray-800 mb-2">Reset Password</h1>
-            <p className="text-gray-700">Enter your new password</p>
+            <h1 className="text-4xl font-bold text-gray-800 mb-2">Сброс пароля</h1>
+            <p className="text-gray-700">Введите новый пароль</p>
           </div>
 
           <form onSubmit={handleResetPassword} className="space-y-6">
@@ -131,7 +125,7 @@ export default function ResetPasswordPage() {
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600" />
               <Input
                 type="password"
-                placeholder="New Password"
+                placeholder="Новый пароль"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -143,7 +137,7 @@ export default function ResetPasswordPage() {
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600" />
               <Input
                 type="password"
-                placeholder="Confirm Password"
+                placeholder="Подтвердите пароль"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required
