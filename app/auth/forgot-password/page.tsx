@@ -1,49 +1,40 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { Mail, ArrowLeft } from "lucide-react"
+import { createClient } from "@supabase/supabase-js"
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
-  const [resetUrl, setResetUrl] = useState<string | null>(null)
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setMessage(null)
-    setResetUrl(null)
 
     try {
-      const response = await fetch("/api/auth/forgot-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+      const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || window.location.origin}/auth/reset-password`,
       })
 
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || "Не удалось отправить ссылку")
-      }
+      if (error) throw error
 
       setMessage({
         type: "success",
-        text: data.message,
+        text: "Ссылка для восстановления пароля отправлена на ваш email!",
       })
-
-      if (data.resetUrl) {
-        setResetUrl(data.resetUrl)
-      }
 
       setEmail("")
     } catch (error) {
+      console.error("[v0] Error:", error)
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Не удалось отправить ссылку",
@@ -102,20 +93,6 @@ export default function ForgotPasswordPage() {
               >
                 {message.text}
               </p>
-            )}
-
-            {resetUrl && (
-              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <p className="text-sm text-blue-700 font-semibold mb-2">Режим разработки - Ссылка для сброса:</p>
-                <a
-                  href={resetUrl}
-                  className="text-xs text-blue-600 underline break-all hover:text-blue-800"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {resetUrl}
-                </a>
-              </div>
             )}
 
             <Button

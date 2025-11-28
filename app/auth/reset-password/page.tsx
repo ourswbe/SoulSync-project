@@ -3,48 +3,45 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
 import { Lock, CheckCircle } from "lucide-react"
+import { createClient } from "@supabase/supabase-js"
 
 export default function ResetPasswordPage() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
-  const [token, setToken] = useState<string | null>(null)
-  const [email, setEmail] = useState<string | null>(null)
 
   useEffect(() => {
-    const tokenParam = searchParams.get("token")
-    const emailParam = searchParams.get("email")
+    const handleHashChange = async () => {
+      const hash = window.location.hash
+      console.log("[v0] Hash:", hash)
 
-    console.log("[v0] Reset password - token:", tokenParam, "email:", emailParam)
+      if (hash && hash.includes("access_token")) {
+        const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
 
-    if (tokenParam && emailParam) {
-      setToken(tokenParam)
-      setEmail(emailParam)
-    } else {
-      setMessage({
-        type: "error",
-        text: "Неверная ссылка для восстановления. Запросите новую ссылку.",
-      })
-      setTimeout(() => router.push("/auth/forgot-password"), 3000)
+        const { error } = await supabase.auth.setSession({
+          access_token: new URLSearchParams(hash.substring(1)).get("access_token")!,
+          refresh_token: new URLSearchParams(hash.substring(1)).get("refresh_token")!,
+        })
+
+        if (error) {
+          console.error("[v0] Session error:", error)
+          setMessage({ type: "error", text: "Неверная ссылка. Запросите новую." })
+        }
+      }
     }
-  }, [router, searchParams])
+
+    handleHashChange()
+  }, [])
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
-
-    if (!token || !email) {
-      setMessage({ type: "error", text: "Неверная ссылка. Используйте ссылку из email." })
-      return
-    }
-
     setIsLoading(true)
     setMessage(null)
 
@@ -54,30 +51,28 @@ export default function ResetPasswordPage() {
       return
     }
 
-    if (password.length < 8) {
-      setMessage({ type: "error", text: "Пароль должен содержать минимум 8 символов" })
+    if (password.length < 6) {
+      setMessage({ type: "error", text: "Пароль должен содержать минимум 6 символов" })
       setIsLoading(false)
       return
     }
 
     try {
-      const response = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, token, newPassword: password }),
+      const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+
+      const { error } = await supabase.auth.updateUser({
+        password: password,
       })
 
-      const data = await response.json()
+      if (error) throw error
 
-      if (!response.ok) {
-        throw new Error(data.error || "Не удалось сбросить пароль")
-      }
+      setMessage({ type: "success", text: "Пароль успешно изменён! Перенаправление..." })
 
-      setMessage({ type: "success", text: "Пароль успешно изменён! Перенаправление на страницу входа..." })
+      await supabase.auth.signOut()
 
       setTimeout(() => router.push("/auth/login"), 2000)
     } catch (error) {
-      console.error("[v0] Error updating password:", error)
+      console.error("[v0] Error:", error)
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Не удалось сбросить пароль",
@@ -148,7 +143,7 @@ export default function ResetPasswordPage() {
 
             <Button
               type="submit"
-              disabled={isLoading || !token || !email}
+              disabled={isLoading}
               className="w-full h-14 bg-white/80 hover:bg-white text-gray-800 font-semibold rounded-full text-lg disabled:opacity-50"
             >
               {isLoading ? "Обновление..." : "Обновить пароль"}
