@@ -3,7 +3,7 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,6 +12,7 @@ import { Lock, CheckCircle } from "lucide-react"
 
 export default function ResetPasswordPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
@@ -19,24 +20,47 @@ export default function ResetPasswordPage() {
   const [hasValidSession, setHasValidSession] = useState(false)
 
   useEffect(() => {
-    const supabase = createClient()
+    const verifyAndSetSession = async () => {
+      const supabase = createClient()
 
-    const hashParams = new URLSearchParams(window.location.hash.substring(1))
-    const accessToken = hashParams.get("access_token")
-    const refreshToken = hashParams.get("refresh_token")
+      const code = searchParams.get("code")
+      const type = searchParams.get("type")
 
-    if (accessToken && refreshToken) {
-      supabase.auth
-        .setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        })
-        .then(() => {
-          setHasValidSession(true)
-        })
-    } else {
-      supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log("[v0] Reset password - code:", code, "type:", type)
+
+      if (code && type === "recovery") {
+        try {
+          // Exchange the code for a session
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code)
+
+          if (error) {
+            console.error("[v0] Error exchanging code:", error)
+            setMessage({
+              type: "error",
+              text: "Invalid or expired reset link. Please request a new one.",
+            })
+            setTimeout(() => router.push("/auth/forgot-password"), 3000)
+            return
+          }
+
+          if (data.session) {
+            console.log("[v0] Session established successfully")
+            setHasValidSession(true)
+          }
+        } catch (err) {
+          console.error("[v0] Exception exchanging code:", err)
+          setMessage({
+            type: "error",
+            text: "Failed to verify reset link. Please try again.",
+          })
+        }
+      } else {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+
         if (session) {
+          console.log("[v0] Found existing session")
           setHasValidSession(true)
         } else {
           setMessage({
@@ -45,9 +69,11 @@ export default function ResetPasswordPage() {
           })
           setTimeout(() => router.push("/auth/forgot-password"), 3000)
         }
-      })
+      }
     }
-  }, [router])
+
+    verifyAndSetSession()
+  }, [router, searchParams])
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -78,9 +104,12 @@ export default function ResetPasswordPage() {
 
       if (error) throw error
 
-      setMessage({ type: "success", text: "Password updated successfully!" })
+      setMessage({ type: "success", text: "Password updated successfully! Redirecting to login..." })
+
+      await supabase.auth.signOut()
       setTimeout(() => router.push("/auth/login"), 2000)
     } catch (error) {
+      console.error("[v0] Error updating password:", error)
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Failed to reset password",
@@ -151,8 +180,8 @@ export default function ResetPasswordPage() {
 
             <Button
               type="submit"
-              disabled={isLoading}
-              className="w-full h-14 bg-white/80 hover:bg-white text-gray-800 font-semibold rounded-full text-lg"
+              disabled={isLoading || !hasValidSession}
+              className="w-full h-14 bg-white/80 hover:bg-white text-gray-800 font-semibold rounded-full text-lg disabled:opacity-50"
             >
               {isLoading ? "Updating..." : "Update Password"}
             </Button>
