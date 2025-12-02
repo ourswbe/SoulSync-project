@@ -46,7 +46,7 @@ export default function SignUpPage() {
         throw new Error("Please fill in all fields")
       }
 
-      console.log("[v0] Starting sign up...")
+      localStorage.setItem("verifyEmail", email)
 
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -57,6 +57,7 @@ export default function SignUpPage() {
             last_name: lastName,
             username: email.split("@")[0],
           },
+          emailRedirectTo: `${window.location.origin}/home`,
         },
       })
 
@@ -69,22 +70,8 @@ export default function SignUpPage() {
       }
 
       if (data.user) {
-        const { error: profileError } = await supabase.from("profiles").insert({
-          id: data.user.id,
-          email: email,
-          first_name: firstName,
-          last_name: lastName,
-          username: email.split("@")[0],
-          bio: "",
-          avatar_url: "",
-        })
-
-        if (profileError) {
-          console.error("[v0] Profile creation error:", profileError)
-        }
+        router.push(`/auth/verify-email?email=${encodeURIComponent(email)}`)
       }
-
-      router.push("/blog")
     } catch (error: unknown) {
       console.error("[v0] Sign up error:", error)
       setError(error instanceof Error ? error.message : "An error occurred")
