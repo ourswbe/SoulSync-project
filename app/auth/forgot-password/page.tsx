@@ -45,12 +45,19 @@ export default function ForgotPasswordPage() {
 
       if (insertError) throw insertError
 
-      // В production здесь должна быть отправка email через внешний сервис
-      console.log("[v0] Password reset code for", email, ":", code)
+      const emailResponse = await fetch("/api/send-reset-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      })
+
+      if (!emailResponse.ok) {
+        throw new Error("Не удалось отправить email")
+      }
 
       setMessage({
         type: "success",
-        text: `Код восстановления: ${code}. Код действителен 10 минут. (В production код будет отправлен на email)`,
+        text: "Код восстановления отправлен на ваш email. Проверьте почту.",
       })
 
       setTimeout(() => {
