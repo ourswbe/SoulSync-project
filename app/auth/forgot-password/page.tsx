@@ -45,32 +45,19 @@ export default function ForgotPasswordPage() {
 
       if (insertError) throw insertError
 
-      const { error: emailError } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          shouldCreateUser: false,
-          data: {
-            reset_code: code,
-          },
-        },
-      })
-
-      if (emailError) {
-        console.error("[FORGOT] Email error:", emailError)
-      }
-
-      console.log("[FORGOT] Password reset code for", email, ":", code)
+      // В production здесь должна быть отправка email через внешний сервис
+      console.log("[v0] Password reset code for", email, ":", code)
 
       setMessage({
         type: "success",
-        text: `Код подтверждения отправлен на ${email}. Код действителен 10 минут. (Для разработки: ${code})`,
+        text: `Код восстановления: ${code}. Код действителен 10 минут. (В production код будет отправлен на email)`,
       })
 
       setTimeout(() => {
         router.push(`/auth/verify-reset-code?email=${encodeURIComponent(email)}`)
       }, 2000)
     } catch (error) {
-      console.error("[FORGOT] Error:", error)
+      console.error("[v0] Error:", error)
       setMessage({
         type: "error",
         text: error instanceof Error ? error.message : "Не удалось отправить код",
