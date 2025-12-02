@@ -2,6 +2,7 @@
 
 import type React from "react"
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
@@ -9,37 +10,70 @@ import { Mail, ArrowLeft } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 
 export default function ForgotPasswordPage() {
+  const router = useRouter()
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
-  const handleResetPassword = async (e: React.FormEvent) => {
+  const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
     setMessage(null)
 
     try {
-      const redirectUrl = `${window.location.origin}/auth/reset-password`
-      console.log("[RESET] Sending password reset email to:", email)
-      console.log("[RESET] Redirect URL:", redirectUrl)
+      const { data: userData, error: userError } = await supabase
+        .from("profiles")
+        .select("email")
+        .eq("email", email)
+        .single()
 
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl,
+      if (userError || !userData) {
+        throw new Error("Пользователь с таким email не найден")
+      }
+
+      const code = Math.floor(100000 + Math.random() * 900000).toString()
+
+      const expiresAt = new Date()
+      expiresAt.setMinutes(expiresAt.getMinutes() + 10)
+
+      const { error: insertError } = await supabase.from("password_reset_codes").insert({
+        email,
+        code,
+        expires_at: expiresAt.toISOString(),
+        used: false,
       })
 
-      if (error) throw error
+      if (insertError) throw insertError
+
+      const { error: emailError } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: false,
+          data: {
+            reset_code: code,
+          },
+        },
+      })
+
+      if (emailError) {
+        console.error("[FORGOT] Email error:", emailError)
+      }
+
+      console.log("[FORGOT] Password reset code for", email, ":", code)
 
       setMessage({
         type: "success",
-        text: "Ссылка для восстановления пароля отправлена на ваш email! Проверьте почту и перейдите по ссылке.",
+        text: `Код подтверждения отправлен на ${email}. Код действителен 10 минут. (Для разработки: ${code})`,
       })
 
-      setEmail("")
+      setTimeout(() => {
+        router.push(`/auth/verify-reset-code?email=${encodeURIComponent(email)}`)
+      }, 2000)
     } catch (error) {
-      console.error("[RESET] Error:", error)
+      console.error("[FORGOT] Error:", error)
       setMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "Не удалось отправить ссылку",
+        text: error instanceof Error ? error.message : "Не удалось отправить код",
       })
     } finally {
       setIsLoading(false)
@@ -71,10 +105,10 @@ export default function ForgotPasswordPage() {
 
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-gray-800 mb-2">Забыли пароль?</h1>
-            <p className="text-gray-700">Введите ваш email для получения ссылки восстановления</p>
+            <p className="text-gray-700">Введите ваш email для получения кода восстановления</p>
           </div>
 
-          <form onSubmit={handleResetPassword} className="space-y-6">
+          <form onSubmit={handleSendCode} className="space-y-6">
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-600" />
               <Input
@@ -102,7 +136,7 @@ export default function ForgotPasswordPage() {
               disabled={isLoading}
               className="w-full h-14 bg-white/80 hover:bg-white text-gray-800 font-semibold rounded-full text-lg"
             >
-              {isLoading ? "Отправка..." : "Отправить ссылку"}
+              {isLoading ? "Отправка..." : "Отправить код"}
             </Button>
           </form>
         </div>

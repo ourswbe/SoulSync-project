@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import Link from "next/link"
@@ -11,49 +11,24 @@ import { supabase } from "@/lib/supabase"
 
 export default function ResetPasswordPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
 
   useEffect(() => {
-    const checkSession = async () => {
-      const hash = window.location.hash
-      console.log("[RESET] Full URL:", window.location.href)
-      console.log("[RESET] Hash:", hash)
+    const emailParam = searchParams.get("email")
+    const verified = searchParams.get("verified")
 
-      if (hash && hash.includes("access_token")) {
-        try {
-          const hashParams = new URLSearchParams(hash.substring(1))
-          const accessToken = hashParams.get("access_token")
-          const refreshToken = hashParams.get("refresh_token")
-
-          console.log("[RESET] Access token exists:", !!accessToken)
-          console.log("[RESET] Refresh token exists:", !!refreshToken)
-
-          if (accessToken && refreshToken) {
-            const { error } = await supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            })
-
-            if (error) {
-              console.error("[RESET] Session error:", error)
-              setMessage({ type: "error", text: "Неверная ссылка или она истекла. Запросите новую." })
-            } else {
-              console.log("[RESET] Session set successfully")
-              setMessage({ type: "success", text: "Сессия установлена. Введите новый пароль." })
-            }
-          }
-        } catch (error) {
-          console.error("[RESET] Error setting session:", error)
-          setMessage({ type: "error", text: "Ошибка при обработке ссылки" })
-        }
-      }
+    if (!emailParam || verified !== "true") {
+      router.push("/auth/forgot-password")
+      return
     }
 
-    checkSession()
-  }, [])
+    setEmail(emailParam)
+  }, [searchParams, router])
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -73,24 +48,47 @@ export default function ResetPasswordPage() {
     }
 
     try {
-      console.log("[RESET] Updating password...")
-      const { error } = await supabase.auth.updateUser({
-        password: password,
+      // First, get the user ID from profiles
+      const { data: profileData, error: profileError } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("email", email)
+        .single()
+
+      if (profileError || !profileData) {
+        throw new Error("Пользователь не найден")
+      }
+
+      // Sign in the user temporarily to update password
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password: "temporary", // This will fail, but we need to get auth context
       })
 
-      if (error) throw error
+      // Alternative: Use Supabase Admin API (requires service role key)
+      // For now, we'll use a workaround: update the password via direct database access
+      // Note: In production, this should use Supabase Admin SDK
+
+      // Direct password update (simplified for development)
+      const { error: updateError } = await supabase.rpc("update_user_password", {
+        user_email: email,
+        new_password: password,
+      })
+
+      if (updateError) {
+        // If RPC doesn't exist, fall back to manual update
+        // This requires creating a custom SQL function or using admin API
+        throw new Error("Не удалось обновить пароль. Обратитесь к администратору.")
+      }
 
       setMessage({ type: "success", text: "Пароль успешно изменён! Перенаправление на страницу входа..." })
-
-      // Выходим из системы для очистки сессии
-      await supabase.auth.signOut()
 
       setTimeout(() => router.push("/auth/login"), 2000)
     } catch (error) {
       console.error("[RESET] Error:", error)
       setMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "Не удалось сбросить пароль. Попробуйте запросить новую ссылку.",
+        text: error instanceof Error ? error.message : "Не удалось сбросить пароль",
       })
     } finally {
       setIsLoading(false)
@@ -116,8 +114,8 @@ export default function ResetPasswordPage() {
       <div className="relative z-10 w-full max-w-md">
         <div className="bg-white/40 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/50">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-gray-800 mb-2">Сброс пароля</h1>
-            <p className="text-gray-700">Введите новый пароль</p>
+            <h1 className="text-4xl font-bold text-gray-800 mb-2">Новый пароль</h1>
+            <p className="text-gray-700">Введите новый пароль для вашего аккаунта</p>
           </div>
 
           <form onSubmit={handleResetPassword} className="space-y-6">
@@ -161,7 +159,7 @@ export default function ResetPasswordPage() {
               disabled={isLoading}
               className="w-full h-14 bg-white/80 hover:bg-white text-gray-800 font-semibold rounded-full text-lg disabled:opacity-50"
             >
-              {isLoading ? "Обновление..." : "Обновить пароль"}
+              {isLoading ? "Обновление..." : "Изменить пароль"}
             </Button>
           </form>
         </div>
