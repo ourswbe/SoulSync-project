@@ -21,6 +21,11 @@ export default function ForgotPasswordPage() {
     setMessage(null)
 
     try {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(email)) {
+        throw new Error("Введите корректный email адрес")
+      }
+
       const { data: userData, error: userError } = await supabase
         .from("profiles")
         .select("email")
@@ -51,18 +56,23 @@ export default function ForgotPasswordPage() {
         body: JSON.stringify({ email, code }),
       })
 
-      if (!emailResponse.ok) {
-        throw new Error("Не удалось отправить email")
+      const emailData = await emailResponse.json()
+
+      if (!emailResponse.ok || !emailData.success) {
+        console.error("[v0] Email send failed:", emailData.error)
+        throw new Error(emailData.error || "Не удалось отправить email")
       }
+
+      console.log("[v0] Email отправлен успешно! Message ID:", emailData.messageId)
 
       setMessage({
         type: "success",
-        text: "Код восстановления отправлен на ваш email. Проверьте почту.",
+        text: "✅ Код восстановления отправлен на ваш email. Проверьте почту (включая папку Спам).",
       })
 
       setTimeout(() => {
         router.push(`/auth/verify-reset-code?email=${encodeURIComponent(email)}`)
-      }, 2000)
+      }, 3000)
     } catch (error) {
       console.error("[v0] Error:", error)
       setMessage({

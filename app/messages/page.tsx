@@ -40,9 +40,14 @@ export default function MessagesPage() {
   const [loading, setLoading] = useState(true)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingTime, setRecordingTime] = useState(0)
+  const [recordingStatus, setRecordingStatus] = useState<"idle" | "recording" | "processing" | "sending" | "error">(
+    "idle",
+  )
+  const [recordingError, setRecordingError] = useState("")
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     checkUser()
@@ -85,6 +90,10 @@ export default function MessagesPage() {
       }
     }
   }, [selectedUser, currentUser])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
 
   async function checkUser() {
     const {
@@ -131,6 +140,8 @@ export default function MessagesPage() {
   async function sendMessage() {
     if (!newMessage.trim() || !selectedUser || !currentUser) return
 
+    console.log("[v0] Sending message:", newMessage)
+
     const { error } = await supabase.from("messages").insert({
       sender_id: currentUser.id,
       receiver_id: selectedUser.id,
@@ -138,7 +149,10 @@ export default function MessagesPage() {
     })
 
     if (!error) {
+      console.log("[v0] Message sent successfully")
       setNewMessage("")
+    } else {
+      console.error("[v0] Error sending message:", error)
     }
   }
 
@@ -177,29 +191,67 @@ export default function MessagesPage() {
 
   async function startRecording() {
     try {
+      console.log("[v0] Recording started")
+      setRecordingError("")
+      setRecordingStatus("recording")
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaRecorderRef.current = new MediaRecorder(stream)
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: "audio/webm;codecs=opus",
+      })
       audioChunksRef.current = []
 
       mediaRecorderRef.current.ondataavailable = (event) => {
-        audioChunksRef.current.push(event.data)
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
+        }
       }
 
       mediaRecorderRef.current.onstop = async () => {
+        console.log("[v0] Recording stopped, processing audio...")
+        setRecordingStatus("processing")
+
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
         const audioUrl = URL.createObjectURL(audioBlob)
 
-        // In production, you would upload this to Supabase Storage
-        // For now, we'll send a placeholder message
-        await supabase.from("messages").insert({
-          sender_id: currentUser.id,
-          receiver_id: selectedUser?.id,
-          content: `🎤 Voice message (${recordingTime}s)`,
-          file_url: audioUrl,
-          file_type: "audio",
-          file_name: "voice-message.webm",
-        })
+        console.log("[v0] Audio processed, sending message...")
+        setRecordingStatus("sending")
 
+        const { data, error } = await supabase
+          .from("messages")
+          .insert({
+            sender_id: currentUser.id,
+            receiver_id: selectedUser?.id,
+            content: `🎤 Голосовое сообщение (${recordingTime}s)`,
+            file_url: audioUrl,
+            file_type: "audio",
+            file_name: `voice-message-${Date.now()}.webm`,
+          })
+          .select()
+
+        if (error) {
+          console.error("[v0] Error sending audio:", error)
+          setRecordingStatus("error")
+          setRecordingError("Ошибка отправки голосового сообщения")
+          setTimeout(() => setRecordingStatus("idle"), 3000)
+        } else {
+          console.log("[v0] Audio sent successfully")
+          setRecordingStatus("idle")
+          if (data && data[0]) {
+            setMessages((prev) => [...prev, data[0] as Message])
+          }
+        }
+
+        stream.getTracks().forEach((track) => {
+          track.stop()
+          console.log("[v0] Media track stopped")
+        })
+      }
+
+      mediaRecorderRef.current.onerror = (event) => {
+        console.error("[v0] MediaRecorder error:", event)
+        setRecordingStatus("error")
+        setRecordingError("Ошибка записи")
         stream.getTracks().forEach((track) => track.stop())
       }
 
@@ -207,7 +259,6 @@ export default function MessagesPage() {
       setIsRecording(true)
       setRecordingTime(0)
 
-      // Auto-stop after 30 seconds
       recordingIntervalRef.current = setInterval(() => {
         setRecordingTime((prev) => {
           if (prev >= 30) {
@@ -218,18 +269,43 @@ export default function MessagesPage() {
         })
       }, 1000)
     } catch (error) {
-      alert("Could not access microphone")
+      console.error("[v0] Could not access microphone:", error)
+      setRecordingStatus("error")
+      setRecordingError("Нет доступа к микрофону")
+      setTimeout(() => setRecordingStatus("idle"), 3000)
     }
   }
 
   function stopRecording() {
+    console.log("[v0] Stopping recording...")
     if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop()
+      if (mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop()
+      }
       setIsRecording(false)
       if (recordingIntervalRef.current) {
         clearInterval(recordingIntervalRef.current)
       }
     }
+  }
+
+  function scrollToBottom() {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
+  const getRecordingButtonClass = () => {
+    if (recordingStatus === "error") return "bg-red-100 border-red-500"
+    if (recordingStatus === "recording") return "bg-red-100 border-red-500 animate-pulse"
+    if (recordingStatus === "processing" || recordingStatus === "sending") return "bg-yellow-100 border-yellow-500"
+    return "border-rose-200 hover:bg-rose-50"
+  }
+
+  const getRecordingButtonText = () => {
+    if (recordingStatus === "recording") return `${recordingTime}s`
+    if (recordingStatus === "processing") return "..."
+    if (recordingStatus === "sending") return "↑"
+    if (recordingStatus === "error") return "!"
+    return ""
   }
 
   const filteredUsers = users.filter(
@@ -388,9 +464,11 @@ export default function MessagesPage() {
                               </a>
                             )}
                             {message.file_url && message.file_type === "audio" && (
-                              <audio controls className="max-w-full">
-                                <source src={message.file_url} type="audio/webm" />
-                              </audio>
+                              <div className="space-y-2">
+                                <audio controls className="max-w-full w-full">
+                                  <source src={message.file_url} type="audio/webm" />
+                                </audio>
+                              </div>
                             )}
 
                             {message.content && <p className="break-words">{message.content}</p>}
@@ -408,11 +486,32 @@ export default function MessagesPage() {
                           </div>
                         </div>
                       ))}
+                      <div ref={messagesEndRef} />
                     </div>
                   </ScrollArea>
 
                   {/* Message Input with File Support */}
                   <div className="p-6 border-t border-rose-200">
+                    {(recordingStatus !== "idle" || recordingError) && (
+                      <div className="mb-3 text-sm text-center">
+                        {recordingStatus === "recording" && (
+                          <div className="text-red-600 font-semibold flex items-center justify-center gap-2">
+                            <span className="w-3 h-3 bg-red-600 rounded-full animate-pulse"></span>
+                            Запись... ({recordingTime}s / 30s)
+                          </div>
+                        )}
+                        {recordingStatus === "processing" && (
+                          <div className="text-yellow-600 font-semibold">Обработка аудио...</div>
+                        )}
+                        {recordingStatus === "sending" && (
+                          <div className="text-blue-600 font-semibold">Отправка...</div>
+                        )}
+                        {recordingStatus === "error" && (
+                          <div className="text-red-600 font-semibold">{recordingError}</div>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex gap-2 mb-3">
                       <Button
                         onClick={() => sendFile("image")}
@@ -445,11 +544,14 @@ export default function MessagesPage() {
                         onClick={isRecording ? stopRecording : startRecording}
                         variant="outline"
                         size="sm"
-                        className={`border-rose-200 hover:bg-rose-50 ${isRecording ? "bg-red-100" : ""}`}
-                        title="Voice Message (30s max)"
+                        className={getRecordingButtonClass()}
+                        title="Голосовое сообщение (до 30 сек)"
+                        disabled={recordingStatus === "processing" || recordingStatus === "sending"}
                       >
-                        <Mic className={`w-4 h-4 ${isRecording ? "text-red-500 animate-pulse" : "text-rose-500"}`} />
-                        {isRecording && <span className="text-xs ml-1">{recordingTime}s</span>}
+                        <Mic
+                          className={`w-4 h-4 ${recordingStatus === "recording" ? "text-red-500" : recordingStatus === "error" ? "text-red-500" : "text-rose-500"}`}
+                        />
+                        {getRecordingButtonText() && <span className="text-xs ml-1">{getRecordingButtonText()}</span>}
                       </Button>
                     </div>
                     <div className="flex gap-3">
