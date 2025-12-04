@@ -5,19 +5,7 @@ import type React from "react"
 import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
-import {
-  MessageSquare,
-  Send,
-  Search,
-  User,
-  X,
-  ImageIcon,
-  FileText,
-  Video,
-  Mic,
-  ChevronDown,
-  ArrowLeft,
-} from "lucide-react"
+import { MessageSquare, Send, Search, User, X, ImageIcon, FileText, Video, Mic, ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -67,8 +55,6 @@ export default function MessagesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploadingFile, setUploadingFile] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
-  const [shouldAutoScroll, setShouldAutoScroll] = useState(true)
-  const isUserScrollingRef = useRef(false)
 
   useEffect(() => {
     checkUser()
@@ -85,67 +71,47 @@ export default function MessagesPage() {
       loadMessages()
 
       const channel = supabase
-        .channel(`chat:${currentUser.id}:${selectedUser.id}`)
+        .channel(`messages-${currentUser.id}-${selectedUser.id}`)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "messages",
+            filter: `or(and(sender_id.eq.${currentUser.id},receiver_id.eq.${selectedUser.id}),and(sender_id.eq.${selectedUser.id},receiver_id.eq.${currentUser.id}))`,
           },
           async (payload) => {
+            console.log("[v0] New message received via realtime:", payload.new)
             const newMsg = payload.new as Message
 
-            if (
-              (newMsg.sender_id === currentUser.id && newMsg.receiver_id === selectedUser.id) ||
-              (newMsg.sender_id === selectedUser.id && newMsg.receiver_id === currentUser.id)
-            ) {
-              console.log("[v0] ✅ Новое сообщение получено мгновенно:", newMsg)
-
-              setMessages((prev) => {
-                if (prev.some((m) => m.id === newMsg.id)) {
-                  return prev
-                }
-                return [...prev, newMsg]
-              })
-
-              if (newMsg.receiver_id === currentUser.id) {
-                await supabase.from("messages").update({ read: true }).eq("id", newMsg.id)
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === newMsg.id)) {
+                return prev
               }
+              return [...prev, newMsg]
+            })
 
-              if (shouldAutoScroll && !isUserScrollingRef.current) {
-                setTimeout(() => scrollToBottom(), 100)
-              }
+            if (newMsg.receiver_id === currentUser.id) {
+              await supabase.from("messages").update({ read: true }).eq("id", newMsg.id)
             }
-          },
-        )
-        .on(
-          "postgres_changes",
-          {
-            event: "DELETE",
-            schema: "public",
-            table: "messages",
-          },
-          (payload) => {
-            const deletedId = payload.old.id
-            console.log("[v0] 🗑️ Сообщение удалено:", deletedId)
 
-            setMessages((prev) => prev.filter((m) => m.id !== deletedId))
+            setTimeout(scrollToBottom, 100)
           },
         )
         .subscribe((status) => {
-          console.log("[v0] 🔌 WebSocket статус:", status)
-          if (status === "SUBSCRIBED") {
-            console.log("[v0] ✅ Realtime подключен успешно (INSERT + DELETE)")
-          }
+          console.log("[v0] Realtime subscription status:", status)
         })
 
       return () => {
-        console.log("[v0] 🔌 Отключение WebSocket")
+        console.log("[v0] Cleaning up realtime subscription")
         supabase.removeChannel(channel)
       }
     }
-  }, [selectedUser, currentUser, shouldAutoScroll])
+  }, [selectedUser, currentUser])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
 
   async function checkUser() {
     const {
@@ -205,22 +171,16 @@ export default function MessagesPage() {
     if (!error && data) {
       console.log("[v0] Message sent successfully:", data)
       setNewMessage("")
-      setTimeout(() => scrollToBottom(), 100)
     } else {
       console.error("[v0] Error sending message:", error)
     }
   }
 
   async function deleteMessage(messageId: string) {
-    if (!confirm("Удалить сообщение у всех?")) return
-
     const { error } = await supabase.from("messages").delete().eq("id", messageId).eq("sender_id", currentUser.id)
 
-    if (error) {
-      console.error("[v0] Ошибка удаления:", error)
-      alert("Не удалось удалить сообщение")
-    } else {
-      console.log("[v0] ✅ Сообщение удалено успешно")
+    if (!error) {
+      setMessages((prev) => prev.filter((m) => m.id !== messageId))
     }
   }
 
@@ -298,7 +258,7 @@ export default function MessagesPage() {
 
   async function startRecording() {
     try {
-      console.log("[v0] 🎤 Начало записи голосового сообщения...")
+      console.log("[v0] Starting voice recording...")
       setRecordingError("")
       setRecordingStatus("recording")
 
@@ -310,29 +270,33 @@ export default function MessagesPage() {
         },
       })
 
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm"
+      const options = { mimeType: "audio/webm;codecs=opus" }
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        options.mimeType = "audio/webm"
+      }
 
-      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType })
+      mediaRecorderRef.current = new MediaRecorder(stream, options)
       audioChunksRef.current = []
 
       mediaRecorderRef.current.ondataavailable = (event) => {
         if (event.data.size > 0) {
+          console.log("[v0] Audio chunk received:", event.data.size, "bytes")
           audioChunksRef.current.push(event.data)
         }
       }
 
       mediaRecorderRef.current.onstop = async () => {
-        console.log("[v0] ⏸️ Запись остановлена, обработка...")
+        console.log("[v0] Recording stopped, processing audio...")
         setRecordingStatus("processing")
 
         try {
-          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType })
-          console.log("[v0] 📦 Аудио blob:", audioBlob.size, "bytes")
+          const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType })
+          console.log("[v0] Audio blob created:", audioBlob.size, "bytes", audioBlob.type)
 
           const reader = new FileReader()
           reader.onloadend = async () => {
             const audioDataUrl = reader.result as string
-            console.log("[v0] 📤 Отправка голосового сообщения...")
+            console.log("[v0] Audio converted to data URL, sending message...")
             setRecordingStatus("sending")
 
             const { data, error } = await supabase
@@ -349,27 +313,45 @@ export default function MessagesPage() {
               .single()
 
             if (error) {
-              console.error("[v0] ❌ Ошибка отправки:", error)
+              console.error("[v0] Error sending audio:", error)
               setRecordingStatus("error")
-              setRecordingError("Не удалось отправить")
+              setRecordingError("Ошибка отправки")
+              setTimeout(() => setRecordingStatus("idle"), 3000)
             } else {
-              console.log("[v0] ✅ Голосовое сообщение отправлено успешно")
+              console.log("[v0] Audio sent successfully:", data)
               setRecordingStatus("idle")
             }
+          }
 
-            setTimeout(() => {
-              if (recordingStatus === "error") setRecordingStatus("idle")
-            }, 3000)
+          reader.onerror = () => {
+            console.error("[v0] Error converting audio to data URL")
+            setRecordingStatus("error")
+            setRecordingError("Ошибка обработки аудио")
+            setTimeout(() => setRecordingStatus("idle"), 3000)
           }
 
           reader.readAsDataURL(audioBlob)
         } catch (error) {
-          console.error("[v0] ❌ Ошибка обработки:", error)
+          console.error("[v0] Error processing audio:", error)
           setRecordingStatus("error")
           setRecordingError("Ошибка обработки")
+          setTimeout(() => setRecordingStatus("idle"), 3000)
         } finally {
-          stream.getTracks().forEach((track) => track.stop())
+          stream.getTracks().forEach((track) => {
+            track.stop()
+            console.log("[v0] Media track stopped:", track.kind)
+          })
         }
+      }
+
+      mediaRecorderRef.current.onerror = (event: any) => {
+        console.error("[v0] MediaRecorder error:", event.error)
+        setRecordingStatus("error")
+        setRecordingError(
+          event.error.name === "NotAllowedError" ? "Доступ к микрофону запрещён" : "Ошибка доступа к микрофону",
+        )
+        stream.getTracks().forEach((track) => track.stop())
+        setTimeout(() => setRecordingStatus("idle"), 3000)
       }
 
       mediaRecorderRef.current.start(100)
@@ -386,11 +368,11 @@ export default function MessagesPage() {
         })
       }, 1000)
 
-      console.log("[v0] ✅ Запись началась")
+      console.log("[v0] Recording started successfully")
     } catch (error: any) {
-      console.error("[v0] ❌ Ошибка доступа к микрофону:", error)
+      console.error("[v0] Could not access microphone:", error)
       setRecordingStatus("error")
-      setRecordingError(error.name === "NotAllowedError" ? "Доступ запрещён" : "Ошибка микрофона")
+      setRecordingError(error.name === "NotAllowedError" ? "Доступ к микрофону запрещён" : "Ошибка доступа к микрофону")
       setTimeout(() => setRecordingStatus("idle"), 3000)
     }
   }
@@ -411,20 +393,12 @@ export default function MessagesPage() {
   function scrollToBottom(smooth = true) {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" })
     setShowScrollButton(false)
-    setShouldAutoScroll(true)
-    isUserScrollingRef.current = false
   }
 
   function handleScroll(event: React.UIEvent<HTMLDivElement>) {
     const element = event.currentTarget
     const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100
-
     setShowScrollButton(!isNearBottom)
-    setShouldAutoScroll(isNearBottom)
-
-    if (!isNearBottom) {
-      isUserScrollingRef.current = true
-    }
   }
 
   const getRecordingButtonClass = () => {
@@ -458,347 +432,318 @@ export default function MessagesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-pink-50 via-rose-50 to-pink-100">
-      <div className="container mx-auto px-4 py-8 max-w-7xl">
-        <div className="mb-6 flex items-center gap-4">
-          <Button
-            onClick={() => router.push("/home")}
-            variant="outline"
-            className="flex items-center gap-2 border-rose-300 hover:bg-rose-50"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Назад
-          </Button>
-          <h1 className="text-3xl font-bold text-rose-900 flex items-center gap-3">
-            <MessageSquare className="w-8 h-8" />
+    <div className="min-h-screen bg-gradient-to-br from-pink-100 via-rose-100 to-pink-200 pt-20">
+      <div className="container mx-auto px-4 py-8">
+        <div className="max-w-6xl mx-auto">
+          <h1 className="text-4xl font-bold text-rose-900 mb-8 flex items-center gap-3">
+            <MessageSquare className="w-10 h-10" />
             Chat
           </h1>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-[calc(100vh-200px)]">
-          <div className="bg-white rounded-2xl shadow-lg border border-rose-100 p-4 flex flex-col">
-            <div className="mb-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-rose-400 w-4 h-4" />
-                <Input
-                  type="text"
-                  placeholder="Поиск..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 border-rose-200 focus:border-rose-400 text-sm"
-                />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 h-[calc(100vh-250px)]">
+            {/* Users List */}
+            <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl p-6 flex flex-col">
+              <div className="mb-4">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-rose-400 w-5 h-5" />
+                  <Input
+                    type="text"
+                    placeholder="Search users..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10 bg-white/50 border-rose-200 focus:border-rose-400"
+                  />
+                </div>
               </div>
+
+              <ScrollArea className="flex-1">
+                <div className="space-y-2">
+                  {filteredUsers.map((user) => (
+                    <button
+                      key={user.id}
+                      onClick={() => setSelectedUser(user)}
+                      className={`w-full p-4 rounded-2xl text-left transition-all ${
+                        selectedUser?.id === user.id
+                          ? "bg-rose-500 text-white"
+                          : "bg-white/50 hover:bg-white/80 text-rose-900"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {user.avatar_url ? (
+                          <img
+                            src={user.avatar_url || "/placeholder.svg"}
+                            alt={user.username}
+                            className="w-10 h-10 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-rose-200 flex items-center justify-center">
+                            <User className="w-6 h-6 text-rose-600" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold truncate">
+                            {user.first_name} {user.last_name}
+                          </p>
+                          <p
+                            className={`text-sm truncate ${
+                              selectedUser?.id === user.id ? "text-rose-100" : "text-rose-600"
+                            }`}
+                          >
+                            @{user.username}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </ScrollArea>
             </div>
 
-            <ScrollArea className="flex-1">
-              <div className="space-y-1">
-                {filteredUsers.map((user) => (
-                  <button
-                    key={user.id}
-                    onClick={() => setSelectedUser(user)}
-                    className={`w-full p-3 rounded-xl text-left transition-all ${
-                      selectedUser?.id === user.id
-                        ? "bg-rose-500 text-white shadow-md"
-                        : "hover:bg-rose-50 text-rose-900"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {user.avatar_url ? (
+            {/* Chat Area */}
+            <div className="md:col-span-2 bg-white/80 backdrop-blur-sm rounded-3xl shadow-xl flex flex-col">
+              {selectedUser ? (
+                <>
+                  {/* Chat Header */}
+                  <div className="p-6 border-b border-rose-200">
+                    <div className="flex items-center gap-3">
+                      {selectedUser.avatar_url ? (
                         <img
-                          src={user.avatar_url || "/placeholder.svg"}
-                          alt={user.username}
-                          className="w-10 h-10 rounded-full object-cover"
+                          src={selectedUser.avatar_url || "/placeholder.svg"}
+                          alt={selectedUser.username}
+                          className="w-12 h-12 rounded-full object-cover"
                         />
                       ) : (
-                        <div className="w-10 h-10 rounded-full bg-rose-200 flex items-center justify-center">
-                          <User className="w-5 h-5 text-rose-600" />
+                        <div className="w-12 h-12 rounded-full bg-rose-200 flex items-center justify-center">
+                          <User className="w-7 h-7 text-rose-600" />
                         </div>
                       )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-sm truncate">
-                          {user.first_name} {user.last_name}
-                        </p>
-                        <p
-                          className={`text-xs truncate ${
-                            selectedUser?.id === user.id ? "text-rose-100" : "text-rose-500"
-                          }`}
-                        >
-                          @{user.username}
-                        </p>
+                      <div>
+                        <h2 className="text-xl font-bold text-rose-900">
+                          {selectedUser.first_name} {selectedUser.last_name}
+                        </h2>
+                        <p className="text-sm text-rose-600">@{selectedUser.username}</p>
                       </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </ScrollArea>
-          </div>
-
-          <div
-            className="md:col-span-2 bg-white rounded-2xl shadow-lg border border-rose-100 flex flex-col overflow-y-auto"
-            onScroll={handleScroll}
-          >
-            {selectedUser ? (
-              <>
-                <div className="p-4 border-b border-rose-100 bg-gradient-to-r from-rose-50 to-pink-50">
-                  <div className="flex items-center gap-3">
-                    {selectedUser.avatar_url ? (
-                      <img
-                        src={selectedUser.avatar_url || "/placeholder.svg"}
-                        alt={selectedUser.username}
-                        className="w-12 h-12 rounded-full object-cover ring-2 ring-rose-200"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-full bg-rose-200 flex items-center justify-center ring-2 ring-rose-300">
-                        <User className="w-6 h-6 text-rose-600" />
-                      </div>
-                    )}
-                    <div>
-                      <h2 className="text-lg font-bold text-rose-900">
-                        {selectedUser.first_name} {selectedUser.last_name}
-                      </h2>
-                      <p className="text-xs text-rose-500">@{selectedUser.username}</p>
                     </div>
                   </div>
-                </div>
 
-                <div className="p-4 space-y-3">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`flex ${message.sender_id === currentUser.id ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[75%] rounded-2xl px-4 py-2 relative group shadow-sm ${
-                          message.sender_id === currentUser.id
-                            ? "bg-rose-500 text-white"
-                            : "bg-white text-rose-900 border border-rose-100"
-                        }`}
-                      >
-                        {message.sender_id === currentUser.id && (
-                          <button
-                            onClick={() => deleteMessage(message.id)}
-                            className="absolute -top-2 -right-2 bg-red-500 hover:bg-red-600 text-white rounded-full p-1.5 opacity-0 group-hover:opacity-100 transition-all shadow-lg hover:scale-110"
-                            title="Удалить у всех"
+                  {/* Messages */}
+                  <div className="flex-1 relative">
+                    <ScrollArea className="h-full p-6" onScroll={handleScroll} ref={scrollAreaRef}>
+                      <div className="space-y-4">
+                        {messages.map((message) => (
+                          <div
+                            key={message.id}
+                            className={`flex ${message.sender_id === currentUser.id ? "justify-end" : "justify-start"}`}
                           >
-                            <X className="w-3 h-3" />
-                          </button>
-                        )}
+                            <div
+                              className={`max-w-[70%] rounded-2xl px-4 py-3 relative group ${
+                                message.sender_id === currentUser.id
+                                  ? "bg-rose-500 text-white"
+                                  : "bg-white text-rose-900"
+                              }`}
+                            >
+                              {message.sender_id === currentUser.id && (
+                                <button
+                                  onClick={() => deleteMessage(message.id)}
+                                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="Delete message"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
 
-                        {message.file_url && message.file_type === "image" && (
-                          <img
-                            src={message.file_url || "/placeholder.svg"}
-                            alt="Image"
-                            className="rounded-xl max-w-xs mb-2"
-                            onLoad={() => {
-                              if (shouldAutoScroll) scrollToBottom(false)
-                            }}
-                          />
-                        )}
-
-                        {message.file_url && message.file_type === "video" && (
-                          <video
-                            src={message.file_url}
-                            controls
-                            className="rounded-xl max-w-xs mb-2"
-                            onLoadedMetadata={() => {
-                              if (shouldAutoScroll) scrollToBottom(false)
-                            }}
-                          />
-                        )}
-
-                        {message.file_url && message.file_type === "audio" && (
-                          <audio
-                            src={message.file_url}
-                            controls
-                            className="max-w-xs"
-                            onLoadedMetadata={() => {
-                              if (shouldAutoScroll) scrollToBottom(false)
-                            }}
-                          />
-                        )}
-
-                        {message.file_url && message.file_type === "document" && (
-                          <a
-                            href={message.file_url}
-                            download={message.file_name}
-                            className="flex items-center gap-2 text-sm underline"
-                          >
-                            <FileText className="w-4 h-4" />
-                            {message.file_name}
-                          </a>
-                        )}
-
-                        {message.content && (
-                          <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
-                        )}
-
-                        <p
-                          className={`text-[10px] mt-1 ${
-                            message.sender_id === currentUser.id ? "text-rose-100" : "text-rose-400"
-                          }`}
-                        >
-                          {new Date(message.created_at).toLocaleTimeString("ru-RU", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                {showScrollButton && (
-                  <button
-                    onClick={() => scrollToBottom()}
-                    className="absolute right-8 bottom-24 bg-rose-500 text-white p-3 rounded-full shadow-lg hover:bg-rose-600 transition-all z-10 animate-bounce"
-                  >
-                    <ChevronDown className="w-5 h-5" />
-                  </button>
-                )}
-
-                <div className="p-4 border-t border-rose-100 bg-white">
-                  {recordingStatus !== "idle" && (
-                    <div className="mb-3 p-2 rounded-lg bg-rose-50 border border-rose-200">
-                      <div className="flex items-center gap-2 text-sm">
-                        {recordingStatus === "recording" && (
-                          <>
-                            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                            <span className="text-rose-900 font-medium">Запись... {recordingTime}s</span>
-                            <div className="flex-1 flex gap-1 items-center">
-                              {[...Array(5)].map((_, i) => (
-                                <div
-                                  key={i}
-                                  className="w-1 bg-rose-400 rounded-full animate-pulse"
-                                  style={{
-                                    height: `${Math.random() * 16 + 8}px`,
-                                    animationDelay: `${i * 0.1}s`,
-                                  }}
+                              {message.file_url && message.file_type === "image" && (
+                                <img
+                                  src={message.file_url || "/placeholder.svg"}
+                                  alt="Image"
+                                  className="rounded-lg max-w-full max-h-64 object-cover mb-2"
+                                  onLoad={() => scrollToBottom(false)}
                                 />
-                              ))}
+                              )}
+                              {message.file_url && message.file_type === "video" && (
+                                <video
+                                  controls
+                                  className="rounded-lg max-w-full max-h-64 mb-2"
+                                  onLoadedMetadata={() => scrollToBottom(false)}
+                                >
+                                  <source src={message.file_url} />
+                                  Your browser does not support video playback.
+                                </video>
+                              )}
+                              {message.file_url && message.file_type === "document" && (
+                                <a
+                                  href={message.file_url}
+                                  download={message.file_name}
+                                  className="flex items-center gap-2 underline hover:no-underline"
+                                  title="Download document"
+                                >
+                                  <FileText className="w-5 h-5" />
+                                  <span className="break-words">{message.file_name || "Document"}</span>
+                                </a>
+                              )}
+                              {message.file_url && message.file_type === "audio" && (
+                                <div className="space-y-2">
+                                  <audio
+                                    controls
+                                    className="max-w-full w-64"
+                                    preload="metadata"
+                                    onLoadedMetadata={() => scrollToBottom(false)}
+                                  >
+                                    <source src={message.file_url} type="audio/webm" />
+                                    <source src={message.file_url} type="audio/mpeg" />
+                                    Your browser does not support audio playback.
+                                  </audio>
+                                </div>
+                              )}
+
+                              {message.content && <p className="break-words whitespace-pre-wrap">{message.content}</p>}
+
+                              <p
+                                className={`text-xs mt-1 ${
+                                  message.sender_id === currentUser.id ? "text-rose-100" : "text-rose-400"
+                                }`}
+                              >
+                                {new Date(message.created_at).toLocaleTimeString("ru-RU", {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </p>
                             </div>
-                          </>
+                          </div>
+                        ))}
+                        <div ref={messagesEndRef} />
+                      </div>
+                    </ScrollArea>
+
+                    {showScrollButton && (
+                      <button
+                        onClick={() => scrollToBottom()}
+                        className="absolute bottom-4 right-4 bg-rose-500 text-white rounded-full p-3 shadow-lg hover:bg-rose-600 transition-all z-10 animate-bounce"
+                        title="Scroll to bottom"
+                      >
+                        <ChevronDown className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Message Input with File Support */}
+                  <div className="p-6 border-t border-rose-200">
+                    {(recordingStatus !== "idle" || recordingError || uploadingFile) && (
+                      <div className="mb-3 text-sm text-center">
+                        {recordingStatus === "recording" && (
+                          <div className="text-red-600 font-semibold flex items-center justify-center gap-2">
+                            <span className="w-3 h-3 bg-red-600 rounded-full animate-pulse"></span>
+                            <span className="animate-pulse">● REC</span>
+                            <span className="font-mono">{recordingTime}s / 30s</span>
+                          </div>
                         )}
                         {recordingStatus === "processing" && (
-                          <>
-                            <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-                            <span className="text-rose-900">Обработка аудио...</span>
-                          </>
+                          <div className="text-yellow-600 font-semibold flex items-center justify-center gap-2">
+                            <div className="w-4 h-4 border-2 border-yellow-600 border-t-transparent rounded-full animate-spin"></div>
+                            Обработка аудио...
+                          </div>
                         )}
                         {recordingStatus === "sending" && (
-                          <>
-                            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                            <span className="text-rose-900">Отправка...</span>
-                          </>
+                          <div className="text-blue-600 font-semibold flex items-center justify-center gap-2">
+                            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                            Отправка...
+                          </div>
                         )}
                         {recordingStatus === "error" && (
-                          <>
-                            <div className="w-2 h-2 bg-red-500 rounded-full" />
-                            <span className="text-red-600">{recordingError}</span>
-                          </>
+                          <div className="text-red-600 font-semibold">{recordingError}</div>
+                        )}
+                        {uploadingFile && (
+                          <div className="text-blue-600 font-semibold flex items-center justify-center gap-2">
+                            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                            Загрузка файла... {uploadProgress}%
+                          </div>
                         )}
                       </div>
+                    )}
+
+                    <input ref={fileInputRef} type="file" onChange={uploadFile} className="hidden" />
+
+                    <div className="flex gap-2 mb-3">
+                      <Button
+                        onClick={() => handleFileSelect("image")}
+                        variant="outline"
+                        size="sm"
+                        className="border-rose-200 hover:bg-rose-50"
+                        disabled={uploadingFile}
+                        title="Upload Image"
+                      >
+                        <ImageIcon className="w-4 h-4 text-rose-500" />
+                      </Button>
+                      <Button
+                        onClick={() => handleFileSelect("video")}
+                        variant="outline"
+                        size="sm"
+                        className="border-rose-200 hover:bg-rose-50"
+                        disabled={uploadingFile}
+                        title="Upload Video"
+                      >
+                        <Video className="w-4 h-4 text-rose-500" />
+                      </Button>
+                      <Button
+                        onClick={() => handleFileSelect("document")}
+                        variant="outline"
+                        size="sm"
+                        className="border-rose-200 hover:bg-rose-50"
+                        disabled={uploadingFile}
+                        title="Upload Document"
+                      >
+                        <FileText className="w-4 h-4 text-rose-500" />
+                      </Button>
+                      <Button
+                        onClick={isRecording ? stopRecording : startRecording}
+                        variant="outline"
+                        size="sm"
+                        className={`${getRecordingButtonClass()} relative overflow-hidden`}
+                        disabled={uploadingFile || recordingStatus === "processing" || recordingStatus === "sending"}
+                        title={isRecording ? "Stop Recording" : "Record Voice Message"}
+                      >
+                        <Mic
+                          className={`w-4 h-4 ${recordingStatus === "recording" ? "text-red-600" : "text-rose-500"}`}
+                        />
+                        {getRecordingButtonText() && (
+                          <span className="ml-1 font-mono text-xs">{getRecordingButtonText()}</span>
+                        )}
+                      </Button>
                     </div>
-                  )}
 
-                  {uploadingFile && (
-                    <div className="mb-3 p-2 rounded-lg bg-rose-50 border border-rose-200">
-                      <div className="flex items-center gap-2 text-sm">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                        <span className="text-rose-900">Загрузка файла... {uploadProgress}%</span>
-                        <div className="flex-1 bg-rose-200 rounded-full h-2">
-                          <div
-                            className="bg-rose-500 h-2 rounded-full transition-all"
-                            style={{ width: `${uploadProgress}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2">
-                    <input ref={fileInputRef} type="file" className="hidden" onChange={uploadFile} />
-
-                    <Button
-                      onClick={() => handleFileSelect("image")}
-                      variant="outline"
-                      size="icon"
-                      className="border-rose-200 hover:bg-rose-50 hover:border-rose-300"
-                      title="Отправить фото"
-                    >
-                      <ImageIcon className="w-5 h-5 text-rose-500" />
-                    </Button>
-
-                    <Button
-                      onClick={() => handleFileSelect("video")}
-                      variant="outline"
-                      size="icon"
-                      className="border-rose-200 hover:bg-rose-50 hover:border-rose-300"
-                      title="Отправить видео"
-                    >
-                      <Video className="w-5 h-5 text-rose-500" />
-                    </Button>
-
-                    <Button
-                      onClick={() => handleFileSelect("document")}
-                      variant="outline"
-                      size="icon"
-                      className="border-rose-200 hover:bg-rose-50 hover:border-rose-300"
-                      title="Отправить файл"
-                    >
-                      <FileText className="w-5 h-5 text-rose-500" />
-                    </Button>
-
-                    <Input
-                      type="text"
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyPress={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                      placeholder="Написать сообщение..."
-                      className="flex-1 border-rose-200 focus:border-rose-400"
-                      disabled={uploadingFile || recordingStatus !== "idle"}
-                    />
-
-                    <Button
-                      onMouseDown={startRecording}
-                      onMouseUp={stopRecording}
-                      onMouseLeave={stopRecording}
-                      onTouchStart={startRecording}
-                      onTouchEnd={stopRecording}
-                      variant="outline"
-                      size="icon"
-                      className={`border-2 transition-all ${getRecordingButtonClass()}`}
-                      disabled={uploadingFile}
-                      title="Удерживайте для записи (макс 30с)"
-                    >
-                      <Mic
-                        className={`w-5 h-5 ${recordingStatus === "recording" ? "text-red-600" : "text-rose-500"}`}
+                    <div className="flex gap-2">
+                      <Input
+                        value={newMessage}
+                        onChange={(e) => setNewMessage(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault()
+                            sendMessage()
+                          }
+                        }}
+                        placeholder="Type a message..."
+                        className="flex-1 bg-white/50 border-rose-200 focus:border-rose-400"
+                        disabled={isRecording || uploadingFile}
                       />
-                      {getRecordingButtonText() && (
-                        <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                          {getRecordingButtonText()}
-                        </span>
-                      )}
-                    </Button>
-
-                    <Button
-                      onClick={sendMessage}
-                      className="bg-rose-500 hover:bg-rose-600 text-white"
-                      disabled={!newMessage.trim() || uploadingFile || recordingStatus !== "idle"}
-                    >
-                      <Send className="w-5 h-5" />
-                    </Button>
+                      <Button
+                        onClick={sendMessage}
+                        disabled={!newMessage.trim() || isRecording || uploadingFile}
+                        className="bg-rose-500 hover:bg-rose-600 text-white"
+                      >
+                        <Send className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-rose-400">
+                  <div className="text-center">
+                    <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                    <p className="text-lg">Select a user to start chatting</p>
                   </div>
                 </div>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-rose-400">
-                <div className="text-center">
-                  <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                  <p>Выберите пользователя для начала чата</p>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
