@@ -1,11 +1,9 @@
 "use client"
 
-import type React from "react"
-
 import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
-import { MessageSquare, Send, Search, User, X, ImageIcon, FileText, Video, Mic, ChevronDown } from "lucide-react"
+import { MessageSquare, Send, Search, User, X, ImageIcon, FileText, Video, Mic, Paperclip } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -50,11 +48,6 @@ export default function MessagesPage() {
   const audioChunksRef = useRef<Blob[]>([])
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const [showScrollButton, setShowScrollButton] = useState(false)
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [uploadingFile, setUploadingFile] = useState(false)
-  const [uploadProgress, setUploadProgress] = useState(0)
 
   useEffect(() => {
     checkUser()
@@ -69,41 +62,30 @@ export default function MessagesPage() {
   useEffect(() => {
     if (selectedUser && currentUser) {
       loadMessages()
-
       const channel = supabase
-        .channel(`messages-${currentUser.id}-${selectedUser.id}`)
+        .channel(`messages-${selectedUser.id}`)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "messages",
-            filter: `or(and(sender_id.eq.${currentUser.id},receiver_id.eq.${selectedUser.id}),and(sender_id.eq.${selectedUser.id},receiver_id.eq.${currentUser.id}))`,
           },
-          async (payload) => {
-            console.log("[v0] New message received via realtime:", payload.new)
-            const newMsg = payload.new as Message
-
-            setMessages((prev) => {
-              if (prev.some((m) => m.id === newMsg.id)) {
-                return prev
+          (payload) => {
+            if (
+              (payload.new.sender_id === selectedUser.id && payload.new.receiver_id === currentUser.id) ||
+              (payload.new.sender_id === currentUser.id && payload.new.receiver_id === selectedUser.id)
+            ) {
+              setMessages((prev) => [...prev, payload.new as Message])
+              if (payload.new.receiver_id === currentUser.id) {
+                supabase.from("messages").update({ read: true }).eq("id", payload.new.id).then()
               }
-              return [...prev, newMsg]
-            })
-
-            if (newMsg.receiver_id === currentUser.id) {
-              await supabase.from("messages").update({ read: true }).eq("id", newMsg.id)
             }
-
-            setTimeout(scrollToBottom, 100)
           },
         )
-        .subscribe((status) => {
-          console.log("[v0] Realtime subscription status:", status)
-        })
+        .subscribe()
 
       return () => {
-        console.log("[v0] Cleaning up realtime subscription")
         supabase.removeChannel(channel)
       }
     }
@@ -160,16 +142,14 @@ export default function MessagesPage() {
 
     console.log("[v0] Sending message:", newMessage)
 
-    const messageData = {
+    const { error } = await supabase.from("messages").insert({
       sender_id: currentUser.id,
       receiver_id: selectedUser.id,
       content: newMessage.trim(),
-    }
+    })
 
-    const { data, error } = await supabase.from("messages").insert(messageData).select().single()
-
-    if (!error && data) {
-      console.log("[v0] Message sent successfully:", data)
+    if (!error) {
+      console.log("[v0] Message sent successfully")
       setNewMessage("")
     } else {
       console.error("[v0] Error sending message:", error)
@@ -184,103 +164,45 @@ export default function MessagesPage() {
     }
   }
 
-  async function handleFileSelect(type: "image" | "video" | "document") {
-    if (!fileInputRef.current) return
+  async function sendFile(type: "image" | "video" | "document") {
+    const fileUrl = prompt(
+      `Enter ${type} URL:\n\nSupported formats:\n` +
+        (type === "image"
+          ? "- Images: .jpg, .jpeg, .png, .gif"
+          : type === "video"
+            ? "- Videos: .mp4, .mov, .avi"
+            : "- Documents: .pdf, .doc, .docx"),
+    )
+    if (!fileUrl?.trim() || !selectedUser || !currentUser) return
 
-    const acceptTypes = {
-      image: "image/*",
-      video: "video/*",
-      document: ".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,.rar",
+    const { error } = await supabase.from("messages").insert({
+      sender_id: currentUser.id,
+      receiver_id: selectedUser.id,
+      content: "",
+      file_url: fileUrl.trim(),
+      file_type: type,
+      file_name: fileUrl.split("/").pop() || "file",
+    })
+
+    if (error) {
+      alert("Failed to send file")
     }
-
-    fileInputRef.current.accept = acceptTypes[type]
-    fileInputRef.current.dataset.fileType = type
-    fileInputRef.current.click()
-  }
-
-  async function uploadFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    if (!file || !selectedUser || !currentUser) return
-
-    const fileType = event.target.dataset.fileType as "image" | "video" | "document"
-
-    setUploadingFile(true)
-    setUploadProgress(0)
-
-    try {
-      console.log("[v0] Uploading file:", file.name, file.type)
-
-      const progressInterval = setInterval(() => {
-        setUploadProgress((prev) => Math.min(prev + 10, 90))
-      }, 200)
-
-      const reader = new FileReader()
-      reader.onloadend = async () => {
-        const fileUrl = reader.result as string
-
-        clearInterval(progressInterval)
-        setUploadProgress(100)
-
-        const { data, error } = await supabase
-          .from("messages")
-          .insert({
-            sender_id: currentUser.id,
-            receiver_id: selectedUser.id,
-            content: fileType === "document" ? `📎 ${file.name}` : "",
-            file_url: fileUrl,
-            file_type: fileType,
-            file_name: file.name,
-          })
-          .select()
-          .single()
-
-        if (error) {
-          console.error("[v0] Error uploading file:", error)
-          alert("Failed to send file")
-        } else {
-          console.log("[v0] File uploaded successfully:", data)
-        }
-
-        setUploadingFile(false)
-        setUploadProgress(0)
-      }
-
-      reader.readAsDataURL(file)
-    } catch (error) {
-      console.error("[v0] Upload error:", error)
-      alert("Failed to upload file")
-      setUploadingFile(false)
-      setUploadProgress(0)
-    }
-
-    event.target.value = ""
   }
 
   async function startRecording() {
     try {
-      console.log("[v0] Starting voice recording...")
+      console.log("[v0] Recording started")
       setRecordingError("")
       setRecordingStatus("recording")
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 44100,
-        },
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: "audio/webm;codecs=opus",
       })
-
-      const options = { mimeType: "audio/webm;codecs=opus" }
-      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-        options.mimeType = "audio/webm"
-      }
-
-      mediaRecorderRef.current = new MediaRecorder(stream, options)
       audioChunksRef.current = []
 
       mediaRecorderRef.current.ondataavailable = (event) => {
         if (event.data.size > 0) {
-          console.log("[v0] Audio chunk received:", event.data.size, "bytes")
           audioChunksRef.current.push(event.data)
         }
       }
@@ -289,72 +211,51 @@ export default function MessagesPage() {
         console.log("[v0] Recording stopped, processing audio...")
         setRecordingStatus("processing")
 
-        try {
-          const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType })
-          console.log("[v0] Audio blob created:", audioBlob.size, "bytes", audioBlob.type)
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
+        const audioUrl = URL.createObjectURL(audioBlob)
 
-          const reader = new FileReader()
-          reader.onloadend = async () => {
-            const audioDataUrl = reader.result as string
-            console.log("[v0] Audio converted to data URL, sending message...")
-            setRecordingStatus("sending")
+        console.log("[v0] Audio processed, sending message...")
+        setRecordingStatus("sending")
 
-            const { data, error } = await supabase
-              .from("messages")
-              .insert({
-                sender_id: currentUser.id,
-                receiver_id: selectedUser?.id,
-                content: `🎤 Голосовое сообщение (${recordingTime}s)`,
-                file_url: audioDataUrl,
-                file_type: "audio",
-                file_name: `voice-${Date.now()}.webm`,
-              })
-              .select()
-              .single()
-
-            if (error) {
-              console.error("[v0] Error sending audio:", error)
-              setRecordingStatus("error")
-              setRecordingError("Ошибка отправки")
-              setTimeout(() => setRecordingStatus("idle"), 3000)
-            } else {
-              console.log("[v0] Audio sent successfully:", data)
-              setRecordingStatus("idle")
-            }
-          }
-
-          reader.onerror = () => {
-            console.error("[v0] Error converting audio to data URL")
-            setRecordingStatus("error")
-            setRecordingError("Ошибка обработки аудио")
-            setTimeout(() => setRecordingStatus("idle"), 3000)
-          }
-
-          reader.readAsDataURL(audioBlob)
-        } catch (error) {
-          console.error("[v0] Error processing audio:", error)
-          setRecordingStatus("error")
-          setRecordingError("Ошибка обработки")
-          setTimeout(() => setRecordingStatus("idle"), 3000)
-        } finally {
-          stream.getTracks().forEach((track) => {
-            track.stop()
-            console.log("[v0] Media track stopped:", track.kind)
+        const { data, error } = await supabase
+          .from("messages")
+          .insert({
+            sender_id: currentUser.id,
+            receiver_id: selectedUser?.id,
+            content: `🎤 Голосовое сообщение (${recordingTime}s)`,
+            file_url: audioUrl,
+            file_type: "audio",
+            file_name: `voice-message-${Date.now()}.webm`,
           })
+          .select()
+
+        if (error) {
+          console.error("[v0] Error sending audio:", error)
+          setRecordingStatus("error")
+          setRecordingError("Ошибка отправки голосового сообщения")
+          setTimeout(() => setRecordingStatus("idle"), 3000)
+        } else {
+          console.log("[v0] Audio sent successfully")
+          setRecordingStatus("idle")
+          if (data && data[0]) {
+            setMessages((prev) => [...prev, data[0] as Message])
+          }
         }
+
+        stream.getTracks().forEach((track) => {
+          track.stop()
+          console.log("[v0] Media track stopped")
+        })
       }
 
-      mediaRecorderRef.current.onerror = (event: any) => {
-        console.error("[v0] MediaRecorder error:", event.error)
+      mediaRecorderRef.current.onerror = (event) => {
+        console.error("[v0] MediaRecorder error:", event)
         setRecordingStatus("error")
-        setRecordingError(
-          event.error.name === "NotAllowedError" ? "Доступ к микрофону запрещён" : "Ошибка доступа к микрофону",
-        )
+        setRecordingError("Ошибка записи")
         stream.getTracks().forEach((track) => track.stop())
-        setTimeout(() => setRecordingStatus("idle"), 3000)
       }
 
-      mediaRecorderRef.current.start(100)
+      mediaRecorderRef.current.start()
       setIsRecording(true)
       setRecordingTime(0)
 
@@ -367,12 +268,10 @@ export default function MessagesPage() {
           return prev + 1
         })
       }, 1000)
-
-      console.log("[v0] Recording started successfully")
-    } catch (error: any) {
+    } catch (error) {
       console.error("[v0] Could not access microphone:", error)
       setRecordingStatus("error")
-      setRecordingError(error.name === "NotAllowedError" ? "Доступ к микрофону запрещён" : "Ошибка доступа к микрофону")
+      setRecordingError("Нет доступа к микрофону")
       setTimeout(() => setRecordingStatus("idle"), 3000)
     }
   }
@@ -390,15 +289,8 @@ export default function MessagesPage() {
     }
   }
 
-  function scrollToBottom(smooth = true) {
-    messagesEndRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" })
-    setShowScrollButton(false)
-  }
-
-  function handleScroll(event: React.UIEvent<HTMLDivElement>) {
-    const element = event.currentTarget
-    const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 100
-    setShowScrollButton(!isNearBottom)
+  function scrollToBottom() {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
   const getRecordingButtonClass = () => {
@@ -527,210 +419,156 @@ export default function MessagesPage() {
                   </div>
 
                   {/* Messages */}
-                  <div className="flex-1 relative">
-                    <ScrollArea className="h-full p-6" onScroll={handleScroll} ref={scrollAreaRef}>
-                      <div className="space-y-4">
-                        {messages.map((message) => (
+                  <ScrollArea className="flex-1 p-6">
+                    <div className="space-y-4">
+                      {messages.map((message) => (
+                        <div
+                          key={message.id}
+                          className={`flex ${message.sender_id === currentUser.id ? "justify-end" : "justify-start"}`}
+                        >
                           <div
-                            key={message.id}
-                            className={`flex ${message.sender_id === currentUser.id ? "justify-end" : "justify-start"}`}
+                            className={`max-w-[70%] rounded-2xl px-4 py-3 relative group ${
+                              message.sender_id === currentUser.id ? "bg-rose-500 text-white" : "bg-white text-rose-900"
+                            }`}
                           >
-                            <div
-                              className={`max-w-[70%] rounded-2xl px-4 py-3 relative group ${
-                                message.sender_id === currentUser.id
-                                  ? "bg-rose-500 text-white"
-                                  : "bg-white text-rose-900"
+                            {message.sender_id === currentUser.id && (
+                              <button
+                                onClick={() => deleteMessage(message.id)}
+                                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+
+                            {message.file_url && message.file_type === "image" && (
+                              <img
+                                src={message.file_url || "/placeholder.svg"}
+                                alt="Image"
+                                className="rounded-lg max-w-full max-h-64 object-cover mb-2"
+                              />
+                            )}
+                            {message.file_url && message.file_type === "video" && (
+                              <video controls className="rounded-lg max-w-full max-h-64 mb-2">
+                                <source src={message.file_url} />
+                              </video>
+                            )}
+                            {message.file_url && message.file_type === "document" && (
+                              <a
+                                href={message.file_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-2 underline"
+                              >
+                                <FileText className="w-5 h-5" />
+                                {message.file_name || "Document"}
+                              </a>
+                            )}
+                            {message.file_url && message.file_type === "audio" && (
+                              <div className="space-y-2">
+                                <audio controls className="max-w-full w-full">
+                                  <source src={message.file_url} type="audio/webm" />
+                                </audio>
+                              </div>
+                            )}
+
+                            {message.content && <p className="break-words">{message.content}</p>}
+
+                            <p
+                              className={`text-xs mt-1 ${
+                                message.sender_id === currentUser.id ? "text-rose-100" : "text-rose-400"
                               }`}
                             >
-                              {message.sender_id === currentUser.id && (
-                                <button
-                                  onClick={() => deleteMessage(message.id)}
-                                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                                  title="Delete message"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              )}
-
-                              {message.file_url && message.file_type === "image" && (
-                                <img
-                                  src={message.file_url || "/placeholder.svg"}
-                                  alt="Image"
-                                  className="rounded-lg max-w-full max-h-64 object-cover mb-2"
-                                  onLoad={() => scrollToBottom(false)}
-                                />
-                              )}
-                              {message.file_url && message.file_type === "video" && (
-                                <video
-                                  controls
-                                  className="rounded-lg max-w-full max-h-64 mb-2"
-                                  onLoadedMetadata={() => scrollToBottom(false)}
-                                >
-                                  <source src={message.file_url} />
-                                  Your browser does not support video playback.
-                                </video>
-                              )}
-                              {message.file_url && message.file_type === "document" && (
-                                <a
-                                  href={message.file_url}
-                                  download={message.file_name}
-                                  className="flex items-center gap-2 underline hover:no-underline"
-                                  title="Download document"
-                                >
-                                  <FileText className="w-5 h-5" />
-                                  <span className="break-words">{message.file_name || "Document"}</span>
-                                </a>
-                              )}
-                              {message.file_url && message.file_type === "audio" && (
-                                <div className="space-y-2">
-                                  <audio
-                                    controls
-                                    className="max-w-full w-64"
-                                    preload="metadata"
-                                    onLoadedMetadata={() => scrollToBottom(false)}
-                                  >
-                                    <source src={message.file_url} type="audio/webm" />
-                                    <source src={message.file_url} type="audio/mpeg" />
-                                    Your browser does not support audio playback.
-                                  </audio>
-                                </div>
-                              )}
-
-                              {message.content && <p className="break-words whitespace-pre-wrap">{message.content}</p>}
-
-                              <p
-                                className={`text-xs mt-1 ${
-                                  message.sender_id === currentUser.id ? "text-rose-100" : "text-rose-400"
-                                }`}
-                              >
-                                {new Date(message.created_at).toLocaleTimeString("ru-RU", {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </p>
-                            </div>
+                              {new Date(message.created_at).toLocaleTimeString("ru-RU", {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </p>
                           </div>
-                        ))}
-                        <div ref={messagesEndRef} />
-                      </div>
-                    </ScrollArea>
-
-                    {showScrollButton && (
-                      <button
-                        onClick={() => scrollToBottom()}
-                        className="absolute bottom-4 right-4 bg-rose-500 text-white rounded-full p-3 shadow-lg hover:bg-rose-600 transition-all z-10 animate-bounce"
-                        title="Scroll to bottom"
-                      >
-                        <ChevronDown className="w-5 h-5" />
-                      </button>
-                    )}
-                  </div>
+                        </div>
+                      ))}
+                      <div ref={messagesEndRef} />
+                    </div>
+                  </ScrollArea>
 
                   {/* Message Input with File Support */}
                   <div className="p-6 border-t border-rose-200">
-                    {(recordingStatus !== "idle" || recordingError || uploadingFile) && (
+                    {(recordingStatus !== "idle" || recordingError) && (
                       <div className="mb-3 text-sm text-center">
                         {recordingStatus === "recording" && (
                           <div className="text-red-600 font-semibold flex items-center justify-center gap-2">
                             <span className="w-3 h-3 bg-red-600 rounded-full animate-pulse"></span>
-                            <span className="animate-pulse">● REC</span>
-                            <span className="font-mono">{recordingTime}s / 30s</span>
+                            Запись... ({recordingTime}s / 30s)
                           </div>
                         )}
                         {recordingStatus === "processing" && (
-                          <div className="text-yellow-600 font-semibold flex items-center justify-center gap-2">
-                            <div className="w-4 h-4 border-2 border-yellow-600 border-t-transparent rounded-full animate-spin"></div>
-                            Обработка аудио...
-                          </div>
+                          <div className="text-yellow-600 font-semibold">Обработка аудио...</div>
                         )}
                         {recordingStatus === "sending" && (
-                          <div className="text-blue-600 font-semibold flex items-center justify-center gap-2">
-                            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                            Отправка...
-                          </div>
+                          <div className="text-blue-600 font-semibold">Отправка...</div>
                         )}
                         {recordingStatus === "error" && (
                           <div className="text-red-600 font-semibold">{recordingError}</div>
                         )}
-                        {uploadingFile && (
-                          <div className="text-blue-600 font-semibold flex items-center justify-center gap-2">
-                            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                            Загрузка файла... {uploadProgress}%
-                          </div>
-                        )}
                       </div>
                     )}
 
-                    <input ref={fileInputRef} type="file" onChange={uploadFile} className="hidden" />
-
                     <div className="flex gap-2 mb-3">
                       <Button
-                        onClick={() => handleFileSelect("image")}
+                        onClick={() => sendFile("image")}
                         variant="outline"
                         size="sm"
                         className="border-rose-200 hover:bg-rose-50"
-                        disabled={uploadingFile}
-                        title="Upload Image"
+                        title="Send Image"
                       >
                         <ImageIcon className="w-4 h-4 text-rose-500" />
                       </Button>
                       <Button
-                        onClick={() => handleFileSelect("video")}
+                        onClick={() => sendFile("video")}
                         variant="outline"
                         size="sm"
                         className="border-rose-200 hover:bg-rose-50"
-                        disabled={uploadingFile}
-                        title="Upload Video"
+                        title="Send Video"
                       >
                         <Video className="w-4 h-4 text-rose-500" />
                       </Button>
                       <Button
-                        onClick={() => handleFileSelect("document")}
+                        onClick={() => sendFile("document")}
                         variant="outline"
                         size="sm"
                         className="border-rose-200 hover:bg-rose-50"
-                        disabled={uploadingFile}
-                        title="Upload Document"
+                        title="Send Document"
                       >
-                        <FileText className="w-4 h-4 text-rose-500" />
+                        <Paperclip className="w-4 h-4 text-rose-500" />
                       </Button>
                       <Button
                         onClick={isRecording ? stopRecording : startRecording}
                         variant="outline"
                         size="sm"
-                        className={`${getRecordingButtonClass()} relative overflow-hidden`}
-                        disabled={uploadingFile || recordingStatus === "processing" || recordingStatus === "sending"}
-                        title={isRecording ? "Stop Recording" : "Record Voice Message"}
+                        className={getRecordingButtonClass()}
+                        title="Голосовое сообщение (до 30 сек)"
+                        disabled={recordingStatus === "processing" || recordingStatus === "sending"}
                       >
                         <Mic
-                          className={`w-4 h-4 ${recordingStatus === "recording" ? "text-red-600" : "text-rose-500"}`}
+                          className={`w-4 h-4 ${recordingStatus === "recording" ? "text-red-500" : recordingStatus === "error" ? "text-red-500" : "text-rose-500"}`}
                         />
-                        {getRecordingButtonText() && (
-                          <span className="ml-1 font-mono text-xs">{getRecordingButtonText()}</span>
-                        )}
+                        {getRecordingButtonText() && <span className="text-xs ml-1">{getRecordingButtonText()}</span>}
                       </Button>
                     </div>
-
-                    <div className="flex gap-2">
+                    <div className="flex gap-3">
                       <Input
+                        type="text"
+                        placeholder="Write a message..."
                         value={newMessage}
                         onChange={(e) => setNewMessage(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault()
-                            sendMessage()
-                          }
-                        }}
-                        placeholder="Type a message..."
+                        onKeyPress={(e) => e.key === "Enter" && sendMessage()}
                         className="flex-1 bg-white/50 border-rose-200 focus:border-rose-400"
-                        disabled={isRecording || uploadingFile}
                       />
                       <Button
                         onClick={sendMessage}
-                        disabled={!newMessage.trim() || isRecording || uploadingFile}
+                        disabled={!newMessage.trim()}
                         className="bg-rose-500 hover:bg-rose-600 text-white"
                       >
-                        <Send className="w-4 h-4" />
+                        <Send className="w-5 h-5" />
                       </Button>
                     </div>
                   </div>
